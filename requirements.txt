@@ -1,0 +1,4 @@
+torch>=2.0.1
+mujoco>=2.3.7
+functorch>=2.0.1
+gymnasium>=0.29.1
