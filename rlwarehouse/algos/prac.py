@@ -63,7 +63,9 @@ class PRAC(Agent):
         self._hard_update(self._q, self._q_target)
         # optimizers
         self._construct_optimizers(pi_lr, q_lr)
-
+        # log hyperparameters
+        self.log_hparams(self.hparams) # log available variables..
+        
     @property
     def extra_fields(self):
         """No extra field is required for EAC algorithm.
@@ -104,7 +106,8 @@ class PRAC(Agent):
 
     def learn_on_step(self):
         # train critics
-        for _ in range(self._batch_per_step):
+        for _ in range(self._batch_per_step): 
+            self._total_grad_steps += 1
             observation, action, reward, next_observation, done, truncated = self.memory.sample(self._batch_size)
             with th.no_grad():
                 next_action_distr = self._pi(next_observation)
@@ -126,9 +129,9 @@ class PRAC(Agent):
             q_var = q_distr.variance.squeeze(-1)
             q_obj = q_crossentropy
             q_loss = q_obj.mean()
-            self.log("q_loss", q_loss)
-            self.log("q_entropy_avg", q_entropy.mean())
-            self.log("q_var_avg", q_var.mean())
+            self.log_grad_step("q_loss", q_loss)
+            self.log_grad_step("q_entropy_avg", q_entropy.mean())
+            self.log_grad_step("q_var_avg", q_var.mean())
             q_loss.backward()
             #th.nn.utils.clip_grad_norm_(self._q.parameters(), self._max_grad_norm)
             self._q_optim.step()
@@ -145,10 +148,10 @@ class PRAC(Agent):
             q_onpolicy = q_onpolicy_distr.mean - self._beta * q_onpolicy_distr.stddev
             pi_obj = - (q_onpolicy + self._alpha * pi_entropy)
             pi_loss = pi_obj.mean()
-            self.log("pi_loss", pi_loss)
-            self.log("q_onpolicy_avg", q_onpolicy.mean())
+            self.log_grad_step("pi_loss", pi_loss)
+            self.log_grad_step("q_onpolicy_avg", q_onpolicy.mean())
             # self.log("q_onpolicy_entropy_avg", q_onpolicy_entropy.mean())
-            self.log("pi_entropy_avg", pi_entropy.mean())
+            self.log_grad_step("pi_entropy_avg", pi_entropy.mean())
             pi_loss.backward()
             #th.nn.utils.clip_grad_norm_(self._pi.parameters(), self._max_grad_norm)
             self._pi_optim.step()
@@ -156,15 +159,31 @@ class PRAC(Agent):
             if self._autotune:
                 pi_entropy_ = pi_entropy.mean().cpu().item()
                 self._alpha = self._alpha * math.exp(self._q_lr * self._alpha * ( self._target_entropy - pi_entropy_))
-                self.log("alpha", self._alpha)
+                self.log_grad_step("alpha", self._alpha)
 
-
+    @property
+    def hparams(self):
+        param = {
+            "autotune": self._autotune, 
+            "target_entropy": self._target_entropy, 
+            "gamma": self._gamma, 
+            "alpha": self._alpha, 
+            "beta": self._beta, 
+            "dropout": self._dropout, 
+            "tau": self._tau, 
+            "batch_per_step": self._batch_per_step, 
+            "batch_size": self._batch_size, 
+            "q_lr": self._q_lr, 
+            "pi_lr": self._pi_lr, 
+        }
+        return param
+    
     def _construct_optimizers(self, pi_lr, q_lr):
         """Initialize Adam optimizer."""
         self._pi_optim = AdamW(self._pi.parameters(), lr=pi_lr)
         self._q_optim = AdamW(self._q.parameters(), lr=self._q_lr)
 
-    def episode_function(self,
+    def compute_function(self,
         observation, 
         action, 
         reward, 

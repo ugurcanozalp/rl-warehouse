@@ -58,7 +58,24 @@ class SAC(Agent):
             param.requires_grad = False
         # optimizers
         self._construct_optimizers(pi_lr, q_lr)
-
+        # log hyperparameters
+        self.log_hparams(self.hparams) # log available variables..
+        
+    @property
+    def hparams(self):
+        param = {
+            "autotune": self._autotune, 
+            "target_entropy": self._target_entropy, 
+            "gamma": self._gamma, 
+            "alpha": self._alpha, 
+            "tau": self._tau, 
+            "batch_per_step": self._batch_per_step, 
+            "batch_size": self._batch_size, 
+            "q_lr": self._q_lr, 
+            "pi_lr": self._pi_lr, 
+        }
+        return param
+    
     @property
     def extra_fields(self):
         """No extra field is required for SAC algorithm.
@@ -100,6 +117,7 @@ class SAC(Agent):
     def learn_on_step(self):
         # train critics
         for _ in range(self._batch_per_step):
+            self._total_grad_steps += 1
             observation, action, reward, next_observation, done, truncated = self.memory.sample(self._batch_size)
             with th.no_grad():
                 next_action_distr = self._pi(next_observation)
@@ -123,9 +141,9 @@ class SAC(Agent):
             self._q_optim.step()
             self._soft_update(self._q1, self._q1_target)
             self._soft_update(self._q2, self._q2_target)
-            self.log("q1_loss", qvalue1_loss)
-            self.log("q2_loss", qvalue2_loss)
-            self.log("avg_q_var", avg_q_var)
+            self.log_grad_step("q1_loss", qvalue1_loss)
+            self.log_grad_step("q2_loss", qvalue2_loss)
+            self.log_grad_step("avg_q_var", avg_q_var)
             # train policy one time
             self._pi_optim.zero_grad()
             action_distr = self._pi(observation)
@@ -137,13 +155,13 @@ class SAC(Agent):
             pi_loss = -(q_imaginary + self._alpha * entropy).mean()
             pi_loss.backward()
             self._pi_optim.step()
-            self.log("pi_loss", pi_loss)
-            self.log("entropy", entropy.mean())
+            self.log_grad_step("pi_loss", pi_loss)
+            self.log_grad_step("entropy", entropy.mean())
             # if autotune
             if self._autotune:
                 entropy_ = entropy.mean().cpu().item()
                 self._alpha = self._alpha * math.exp(self._q_lr * ( self._target_entropy - entropy_))
-                self.log("alpha", self._alpha)
+                self.log_grad_step("alpha", self._alpha)
 
     def _construct_optimizers(self, pi_lr, q_lr):
         """Initialize Adam optimizer."""
@@ -154,7 +172,7 @@ class SAC(Agent):
             lr=q_lr
         )
 
-    def episode_function(self,
+    def compute_function(self,
         observation, 
         action, 
         reward, 

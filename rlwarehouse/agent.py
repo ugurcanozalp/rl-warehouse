@@ -34,7 +34,7 @@ class Agent(object):
     """Abstract class for all RL agents.
     """
     
-    def __init__(self, device: str = "cpu", start_steps: int = 10000, **memory_kwargs):
+    def __init__(self, device: str = "cpu", compute_period=0, start_steps: int = 10000, **memory_kwargs):
         """Summary
         
         Args:
@@ -43,7 +43,9 @@ class Agent(object):
         """
         self._device = device
         self._start_steps = start_steps
-        self.memory = EpisodeMemory(device=self._device,
+        self._total_grad_steps = 0 # increment it as you learn from a single batch
+        self.memory = EpisodeMemory(device=self._device, 
+                                    compute_period=compute_period, 
                                     extra_fields=self.extra_fields, 
                                      derived_fields=self.derived_fields, 
                                      **memory_kwargs)
@@ -52,7 +54,16 @@ class Agent(object):
     def device(self) -> str:
         """Retrieve device currently being used by minibatch."""
         return self._device
-    
+
+    @property
+    def hparams(self): 
+        """Hyperparameters of your algorithm. Override it for your algorithm.
+
+        Returns:
+            Dict[str, Union[float, int]]: Hyperparameter dictionary 
+        """
+        return {}
+
     @property
     def extra_fields(self):
         """Extra fields of the algorithm. Override it for your algorithm.
@@ -125,23 +136,33 @@ class Agent(object):
         """
         raise NotImplementedError
 
-    def episode_function(self, *args):
-        """This function is called after episode ending to populate necessary variables 
-        in the experience replay.
+    def compute_function(self, *args):
+        """This function is called after episode end or fixed rollout duration
+        to populate necessary variables in the experience replay.
 
         Returns:
             Tuple: Tuple of episodic data, such as return-to-go.
         """
         return ()
 
-    def log(self, log_name: str, log_value: float):
-        """Log a parameter during training
+    def log(self, log_name: str, log_value: float, step: int = None):
+        """Log a parameter during training wrt env interactions
+
+        Args:
+            log_name (str): Name of the logged parameter
+            log_value (float): Value of the logged parameter
+            step (int): Step index
+        """
+        self.memory.log(log_name, log_value, step)
+
+    def log_grad_step(self, log_name: str, log_value: float):
+        """Log a parameter during training wrt grad step
 
         Args:
             log_name (str): Name of the logged parameter
             log_value (float): Value of the logged parameter
         """
-        self.memory.log(log_name, log_value)
+        self.memory.log(log_name, log_value, self._total_grad_steps)
 
     def log_hparams(self, dict: Dict[str, Union[bool, str, float, int]]):
         """Log set of hyperparameters
@@ -150,6 +171,15 @@ class Agent(object):
             dict (Dict): Dictionary to log
         """
         self.memory.log_hparams(dict)
+
+    def log_text(self, description: str, text: str):
+        """Log a textual info
+
+        Args:
+            description (str): Text description
+            text (str): Text to be logged
+        """
+        self.memory.log_text(description, text)
 
     def train(self, max_steps: int = int(5e5), 
             test_interval: int = None, 
@@ -163,7 +193,8 @@ class Agent(object):
             TYPE: Description
         """
         for i in range(max_steps): 
-            self.memory.one_step_rollout(self) # step inside episode memory
+            is_episode_end = self.memory.one_step_rollout(self) # step inside episode memory
+            self.log_grad_step("total_env_interactions", self.memory._total_env_interactions)
             if i > self._start_steps:
                 self.learn_on_step() # learn here.
     
@@ -174,5 +205,6 @@ class Agent(object):
         parser.add_argument("--buffer_capacity", type=int, default=1000000)
         parser.add_argument("--start_steps", type=int, default=10000)
         parser.add_argument("--device", type=str, default="cuda")
+        parser.add_argument("--compute_period", type=int, default=-1)
         #parser.add_argument("--env_kwargs", type=json.loads())
         return parser

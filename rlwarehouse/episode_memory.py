@@ -1,6 +1,8 @@
 
 from collections import OrderedDict, deque
+import datetime
 import random
+import os
 from typing import Iterator, List, Tuple, Callable, Any, Dict, Union
 
 import numpy as np
@@ -16,6 +18,7 @@ class EpisodeMemory(object):
     def __init__(self, 
                  env_name: str,
                  buffer_capacity: int, 
+                 compute_period: int, 
                  device: str = "cuda", 
                  env_kwargs: Dict = dict(), 
                  extra_fields: Tuple[str] = tuple(), 
@@ -37,11 +40,12 @@ class EpisodeMemory(object):
         """
         self._device = device
         self._extra_fields = extra_fields
-        self._derived_fields = derived_fields
-        self._insert_fields = self._main_fields + self._extra_fields 
+        self._derived_fields = derived_fields # derived on episode end
+        self._insert_fields = self._main_fields + self._extra_fields # added to memory at each step
         self._fields = self._insert_fields + self._derived_fields
         #
         self._buffer_capacity = buffer_capacity
+        self._compute_period = compute_period
         self._size = 0
         self._not_computed = 0
         self._buffer = {field: deque(maxlen=self._buffer_capacity) for field in self._fields}
@@ -51,7 +55,11 @@ class EpisodeMemory(object):
         self._total_env_interactions = 0
         self._clear_record()
         self.clear() # clears everything and resets the environment
-        self._logger = SummaryWriter()
+        current_time = datetime.datetime.now().strftime("%b%d_%H-%M-%S")
+        logdir = os.path.join("runs", env_name + "_" + current_time)
+        self._logger = SummaryWriter(logdir=logdir)
+        self.log_text("envname", env_name)
+        self.log_text("experiment_time", current_time)
 
     @property
     def env_info(self):
@@ -100,14 +108,16 @@ class EpisodeMemory(object):
         self._not_computed = 0
         self._buffer = {field: deque(maxlen=self._buffer_capacity) for field in self._fields}     
 
-    def log(self, log_name: str, log_value: float):
+    def log(self, log_name: str, log_value: float, step: int = None):
         """Log a parameter during training
 
         Args:
             log_name (str): Name of the logged parameter
             log_value (float): Value of the logged parameter
+            step (int): Step index
         """
-        self._logger.add_scalar(log_name, log_value, self._total_env_interactions)
+        step = self._total_env_interactions if step is None else step
+        self._logger.add_scalar(log_name, log_value, step)
     
     def log_hparams(self, dict: Dict[str, Union[bool, str, float, int]]):
         """Log a hyperparameter
@@ -115,7 +125,16 @@ class EpisodeMemory(object):
         Args:
             dict (Dict): Dictionary to log
         """
-        self._logger.add_hparams(dict)
+        self._logger.add_hparams(dict, {})
+
+    def log_text(self, description: str, text: str):
+        """Log a textual info
+
+        Args:
+            description (str): Text description
+            text (str): Text to be logged
+        """
+        self._logger.add_text(description, text)
         
     def __getitem__(self, key):
         if key in self._fields:
@@ -165,7 +184,7 @@ class EpisodeMemory(object):
         if self._not_computed == 0:
             return None
         episode_args = (self._get_last_n(self._buffer[key], self._not_computed) for key in self._insert_fields)
-        episode_results = agent.episode_function(*episode_args)
+        episode_results = agent.compute_function(*episode_args)
         for key, value in zip(self._derived_fields, episode_results):
             self._buffer[key].extend(value)
         self._not_computed = 0
@@ -227,6 +246,7 @@ class EpisodeMemory(object):
         if action is None: # it means agent says randomly act.
             action = self._env.action_space.sample()
         next_observation, reward, done, truncated, _ = self._env.step(action)
+        is_episode_end = done or truncated
         if record:
             if self._episode_time == 0:
                 self._clear_record()
@@ -243,8 +263,12 @@ class EpisodeMemory(object):
             truncated, 
             *extra
         )
-        if done or truncated: # end of the episode
+        # compute_period=-1 for off-policy algos. compute on episode end
+        # compute_period>0 for on-policy algos, compute when the time is ok
+        compute_flag = (self._compute_period==-1 and is_episode_end) or (self._total_env_interactions % self._compute_period == 0)
+        if compute_flag:
             self._compute(agent) 
+        if is_episode_end: # end of the episode
             self.observation, _ = self._env.reset()
             agent.reset()
             self.log("episode_score", self.episode_score)
@@ -253,4 +277,4 @@ class EpisodeMemory(object):
             self.episode_score = 0
         else:
             self.observation = next_observation
-        return self.last_episode_score
+        return self.last_episode_score 
