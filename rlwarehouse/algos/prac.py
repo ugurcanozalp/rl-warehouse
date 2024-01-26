@@ -30,6 +30,8 @@ class PRAC(Agent):
         beta: float = 0.2, 
         dropout: float = 0.01, 
         tau: float = 0.005, 
+        lb: float = -1.0, 
+        ub: float = 1.0, 
         batch_per_step: int = 1, 
         pi_lr: float = 3e-4, 
         q_lr: float = 1e-3, 
@@ -53,7 +55,7 @@ class PRAC(Agent):
         self._pi_lr = pi_lr
         self._max_grad_norm = max_grad_norm
         # networks
-        self._pi = policy_map[pi_net](**self.memory.env_info, dropout=self._dropout).to(self._device)
+        self._pi = policy_map[pi_net](**self.memory.env_info, dropout=self._dropout, lb=lb, ub=ub).to(self._device)
         self._q = probabilistic_qvalue_map[q_net](dropout=self._dropout, **self.memory.env_info).to(self._device)
         self._q_target = probabilistic_qvalue_map[q_net](dropout=self._dropout, **self.memory.env_info).to(self._device)
         #
@@ -207,6 +209,8 @@ class PRAC(Agent):
         parser.add_argument("--beta", type=float, default=0.2)
         parser.add_argument("--dropout", type=float, default=0.01)
         parser.add_argument("--tau", type=float, default=0.005)
+        parser.add_argument("--lb", type=float, default=-1.0)
+        parser.add_argument("--ub", type=float, default=1.0)
         parser.add_argument("--batch_per_step", type=int, default=1)
         parser.add_argument("--target_update_interval", type=int, default=1)
         parser.add_argument("--pi_lr", type=float, default=3e-4)

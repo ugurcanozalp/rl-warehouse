@@ -11,4 +11,4 @@ python -m scripts.prac --env_name Hopper-v4 --autotune --target_entropy -1 --bet
 ## Algorithms implemented
 - [x] Probabilistic Actor Critic (in development)
 - [x] [Soft Actor Critic](https://arxiv.org/abs/1812.05905v2)
-- [] [Proximal Policy Optimization](https://arxiv.org/abs/1707.06347) (not working yet)
+- [ ] [Proximal Policy Optimization](https://arxiv.org/abs/1707.06347) (not working yet)
