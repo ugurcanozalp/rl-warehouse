@@ -125,7 +125,9 @@ class EpisodeMemory(object):
         Args:
             dict (Dict): Dictionary to log
         """
-        self._logger.add_hparams(dict, {})
+        text = " | hyperparam | value | \n | ----------- | ----------- | " + \
+            "\n".join([f" | {k} | {v:2.4f} | " for k, v in dict.items()])
+        self._logger.add_text("hyperparameters", text, 0)
 
     def log_text(self, description: str, text: str):
         """Log a textual info
@@ -232,6 +234,12 @@ class EpisodeMemory(object):
             indices = indices = list(range(self._size-1, self._size-1-remainder, -1)) + multiple*list(range(self._size))
         return self._sample_by_indices(indices)
 
+    def _adjust_action(self, action):
+        """This function takes action output of network bounded in (-1, 1)
+        and converts it into environment bounds for action taking. """
+        l, h = self._env.action_space.low, self._env.action_space.high
+        return (h+l)/2 + (h-l)/2 * action
+
     def one_step_rollout(self, agent: Callable, record=False):
         """Rollout in the environment with agent and save transitions to memory.
 
@@ -245,7 +253,8 @@ class EpisodeMemory(object):
         action, extra = agent.step(self.observation)
         if action is None: # it means agent says randomly act.
             action = self._env.action_space.sample()
-        next_observation, reward, done, truncated, _ = self._env.step(action)
+        # next_observation, reward, done, truncated, _ = self._env.step(action)
+        next_observation, reward, done, truncated, _ = self._env.step(self._adjust_action(action))
         is_episode_end = done or truncated
         if record:
             if self._episode_time == 0:

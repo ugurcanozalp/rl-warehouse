@@ -24,8 +24,6 @@ class PPO(Agent):
         gamma: float = 0.99,
         lambd: float = 0.95, 
         alpha: float = 5e-4, 
-        lb: float = -1.0, 
-        ub: float = 1.0, 
         epochs_per_rollout: int = 10, 
         steps_per_rollout: int = 2048, 
         clip_ratio: int = 0.4, 
@@ -56,7 +54,7 @@ class PPO(Agent):
         self._batch_per_rollout = self._steps_per_rollout // batch_size 
         self._epochs_per_rollout = epochs_per_rollout
         # networks
-        self._pi = policy_map[pi_net](**self.memory.env_info, lb=lb, ub=ub).to(self._device)
+        self._pi = policy_map[pi_net](**self.memory.env_info).to(self._device)
         self._v = value_map[v_net](**self.memory.env_info).to(self._device)
         # optimizers
         self._construct_optimizers(pi_lr, v_lr)
@@ -205,8 +203,6 @@ class PPO(Agent):
         parser.add_argument("--gamma", type=float, default=0.99)
         parser.add_argument("--lambd", type=float, default=0.95) 
         parser.add_argument("--alpha", type=float, default=5e-4)
-        parser.add_argument("--lb", type=float, default=-1.0)
-        parser.add_argument("--ub", type=float, default=1.0)
         parser.add_argument("--epochs_per_rollout", type=int, default=10) 
         parser.add_argument("--steps_per_rollout", type=int, default=2048) 
         parser.add_argument("--clip_ratio", type=int, default=0.4) 

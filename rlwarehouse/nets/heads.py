@@ -3,7 +3,7 @@ import torch as th
 from torch import nn
 from torch.distributions import Distribution, Normal, Gamma, Categorical, TransformedDistribution, MultivariateNormal 
 from torch.distributions.transforms import TanhTransform, SigmoidTransform, AffineTransform, ComposeTransform
-from .utils import StableTanhTransform, BoundingTanhTransform
+from .utils import StableTanhTransform
 
 
 class GaussianHead(nn.Module):
@@ -31,24 +31,6 @@ class SquashedGaussianHead(nn.Module):
         std_bt = th.nn.functional.softplus(logstd_bt) 
         dist_bt = Normal(mean_bt, std_bt, validate_args=True)
         transform = StableTanhTransform(cache_size=1)
-        dist = TransformedDistribution(dist_bt, [transform], validate_args=True)
-        return dist
-
-
-class SquashedGaussianHeadVaryingBounds(nn.Module):
-    def __init__(self, n, lb, ub):
-        super(SquashedGaussianHeadVaryingBounds, self).__init__()
-        self._n = n
-        self._lb = lb
-        self._ub = ub
-
-    def forward(self, x):
-        # bt means before tanh
-        mean_bt = x[...,:self._n] 
-        logstd_bt = x[...,self._n:] 
-        std_bt = th.nn.functional.softplus(logstd_bt)
-        dist_bt = Normal(mean_bt, std_bt, validate_args=True)
-        transform = BoundingTanhTransform(self._lb, self._ub, cache_size=1)
         dist = TransformedDistribution(dist_bt, [transform], validate_args=True)
         return dist
 

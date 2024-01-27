@@ -26,8 +26,6 @@ class SAC(Agent):
         gamma: float = 0.99,
         alpha: float = 0.2, 
         tau: float = 0.005, 
-        lb: float = -1.0, 
-        ub: float = 1.0, 
         batch_per_step: int = 1, 
         pi_lr: float = 3e-4,
         q_lr: float = 1e-3, 
@@ -46,7 +44,7 @@ class SAC(Agent):
         self._q_lr = q_lr
         self._pi_lr = pi_lr
         # networks
-        self._pi = policy_map[pi_net](**self.memory.env_info, lb=lb, ub=ub).to(self._device)
+        self._pi = policy_map[pi_net](**self.memory.env_info).to(self._device)
         self._q1 = qvalue_map[q_net](**self.memory.env_info).to(self._device)
         self._q2 = qvalue_map[q_net](**self.memory.env_info).to(self._device)
         self._q1_target = qvalue_map[q_net](**self.memory.env_info).eval().to(self._device)
@@ -196,8 +194,6 @@ class SAC(Agent):
         parser.add_argument("--gamma", type=float, default=0.99)
         parser.add_argument("--alpha", type=float, default=0.2)
         parser.add_argument("--tau", type=float, default=0.005)
-        parser.add_argument("--lb", type=float, default=-1.0)
-        parser.add_argument("--ub", type=float, default=1.0)
         parser.add_argument("--batch_per_step", type=int, default=1)
         parser.add_argument("--target_update_interval", type=int, default=1)
         parser.add_argument("--pi_lr", type=float, default=3e-4)
