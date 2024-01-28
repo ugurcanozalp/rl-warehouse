@@ -15,8 +15,8 @@ from torch.utils.data import DataLoader
 from ..agent import Agent
 from ..nets import policy_map, probabilistic_qvalue_map
 
-
-# beta-> Ant = 0.7, Hopper = 0.7, Walker2d = 0.4, HalfCheetah = 0.1, Humanoid = ???
+# beta parameter are usually tried from one of them -> 0.1, 0.4, 0.7, 1.0
+# beta-> Ant = 0.7, Hopper = 0.7, Walker2d = 0.4, HalfCheetah = 0.1, Humanoid = 0.7 (maybe 0.4)
 
 class PRAC(Agent):
     

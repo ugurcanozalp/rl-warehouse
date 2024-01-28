@@ -252,7 +252,8 @@ class EpisodeMemory(object):
         """
         action, extra = agent.step(self.observation)
         if action is None: # it means agent says randomly act.
-            action = self._env.action_space.sample()
+            # action = self._env.action_space.sample()
+            action = np.tanh(np.random.randn(*self._env.action_space.shape)) # random action between (-1, 1)
         # next_observation, reward, done, truncated, _ = self._env.step(action)
         next_observation, reward, done, truncated, _ = self._env.step(self._adjust_action(action))
         is_episode_end = done or truncated
