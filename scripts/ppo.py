@@ -10,4 +10,4 @@ args = parser.parse_args()
 dict_args = vars(args)
 agent = PPO(**dict_args)
 
-agent.train()
+agent.experiment()

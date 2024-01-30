@@ -44,11 +44,11 @@ class SAC(Agent):
         self._q_lr = q_lr
         self._pi_lr = pi_lr
         # networks
-        self._pi = policy_map[pi_net](**self.memory.env_info).to(self._device)
-        self._q1 = qvalue_map[q_net](**self.memory.env_info).to(self._device)
-        self._q2 = qvalue_map[q_net](**self.memory.env_info).to(self._device)
-        self._q1_target = qvalue_map[q_net](**self.memory.env_info).eval().to(self._device)
-        self._q2_target = qvalue_map[q_net](**self.memory.env_info).eval().to(self._device)
+        self._pi = policy_map[pi_net](**self.env_info).to(self._device)
+        self._q1 = qvalue_map[q_net](**self.env_info).to(self._device)
+        self._q2 = qvalue_map[q_net](**self.env_info).to(self._device)
+        self._q1_target = qvalue_map[q_net](**self.env_info).eval().to(self._device)
+        self._q2_target = qvalue_map[q_net](**self.env_info).eval().to(self._device)
         self._hard_update(self._q1, self._q1_target)
         self._hard_update(self._q2, self._q2_target)
         # no grad for target networks
@@ -58,8 +58,6 @@ class SAC(Agent):
             param.requires_grad = False
         # optimizers
         self._construct_optimizers(pi_lr, q_lr)
-        # log hyperparameters
-        self.log_hparams(self.hparams) # log available variables..
         
     @property
     def hparams(self):
@@ -95,7 +93,7 @@ class SAC(Agent):
 
     @th.no_grad()
     def step(self, observation: np.ndarray):
-        if self.total_env_interactions < self._start_steps:
+        if self._total_env_interactions < self._start_steps:
             action = None
         else:
             observation_ = th.from_numpy(observation).unsqueeze(0).float().to(self.device)

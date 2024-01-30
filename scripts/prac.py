@@ -10,4 +10,4 @@ args = parser.parse_args()
 dict_args = vars(args)
 agent = PRAC(**dict_args)
 
-agent.train()
+agent.experiment()

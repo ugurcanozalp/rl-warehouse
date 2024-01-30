@@ -35,10 +35,10 @@ class PPO(Agent):
         **memory_kwargs
     ):
         # override memory_kwargs for ppo
-        memory_kwargs["compute_period"] = steps_per_rollout
         memory_kwargs["buffer_capacity"] = steps_per_rollout
         super().__init__(**memory_kwargs)
         self._start_steps = 0 # override start_steps
+        self._compute_period = steps_per_rollout
         # hyperparameters
         self._gamma = gamma
         self._lambda = lambd
@@ -49,17 +49,14 @@ class PPO(Agent):
         self._max_grad_norm = max_grad_norm
         self._v_lr = v_lr
         self._pi_lr = pi_lr
-        self._steps_per_rollout = memory_kwargs["compute_period"]
         self._steps_per_rollout = steps_per_rollout
         self._batch_per_rollout = self._steps_per_rollout // batch_size 
         self._epochs_per_rollout = epochs_per_rollout
         # networks
-        self._pi = policy_map[pi_net](**self.memory.env_info).to(self._device)
-        self._v = value_map[v_net](**self.memory.env_info).to(self._device)
+        self._pi = policy_map[pi_net](**self.env_info).to(self._device)
+        self._v = value_map[v_net](**self.env_info).to(self._device)
         # optimizers
         self._construct_optimizers(pi_lr, v_lr)
-        # log hyperparameters
-        self.log_hparams(self.hparams) # log available variables..
 
     @property
     def hparams(self):
@@ -174,7 +171,7 @@ class PPO(Agent):
         cum_return, gae = np.zeros_like(reward), np.zeros_like(reward)
         _, (_, last_value) = self.step(next_observation[-1])
         for t in reversed(range(self.memory._not_computed)):
-            t_global = self.memory._total_env_interactions + t+1 - self.memory._not_computed
+            t_global = self._total_env_interactions + t+1 - self.memory._not_computed
             if t == self.memory._not_computed-1: # first time for calculation
                 cum_return_next = reward[-1] + not_done[-1] * self._gamma * last_value  
                 gae_next = reward[-1] + self._gamma * last_value - value[-1] # delta at last time...

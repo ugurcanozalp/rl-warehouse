@@ -6,21 +6,16 @@ import os
 from typing import Iterator, List, Tuple, Callable, Any, Dict, Union
 
 import numpy as np
-import gymnasium
 import torch as th
 
-from tensorboardX import SummaryWriter
 
 class EpisodeMemory(object):
 
     _main_fields = ("observation", "action", "reward", "next_observation", "done", "truncated")
 
     def __init__(self, 
-                 env_name: str,
                  buffer_capacity: int, 
-                 compute_period: int, 
                  device: str = "cuda", 
-                 env_kwargs: Dict = dict(), 
                  extra_fields: Tuple[str] = tuple(), 
                  derived_fields: Tuple[str] = tuple(), 
                  **kwargs
@@ -45,65 +40,14 @@ class EpisodeMemory(object):
         self._fields = self._insert_fields + self._derived_fields
         #
         self._buffer_capacity = buffer_capacity
-        self._compute_period = compute_period
         self._size = 0
         self._not_computed = 0
         self._buffer = {field: deque(maxlen=self._buffer_capacity) for field in self._fields}
-        self._env = gymnasium.make(env_name, render_mode="human", **env_kwargs)
-        self._episode_max_time = self._env._max_episode_steps # environment time limit
-        self._episode_time = 0 # episode counter
-        self._total_env_interactions = 0
-        self._clear_record()
-        self.clear() # clears everything and resets the environment
-        current_time = datetime.datetime.now().strftime("%b%d_%H-%M-%S")
-        logdir = os.path.join("runs", env_name + "_" + current_time)
-        self._logger = SummaryWriter(logdir=logdir)
-        self.log_text("envname", env_name)
-        self.log_text("experiment_time", current_time)
-
-    @property
-    def env_info(self):
-        return {
-            "observation_shape": self._env.observation_space.shape,
-            "action_shape": self._env.action_space.shape, 
-            "observation_space": self._env.observation_space, 
-            "action_space": self._env.action_space, 
-        }
-    
-    def _clear_record(self, obs: Union[np.ndarray, None] = None):
-        """The agent saves state-action history, this function clears the records.
-
-        Args:
-            obs (Union[np.array, None], optional): Initial state after reset call.
-        """
-        self._obs_history = np.zeros((self._episode_max_time+1, *self._env.observation_space.shape), dtype=self._env.observation_space.dtype)
-        if obs is not None:
-            self._obs[0] = obs # clear while adding initial state to record
-        self._act_history = np.zeros((self._episode_max_time, *self._env.action_space.shape), dtype=self._env.action_space.dtype)
-        self._reward_history = np.zeros(self._episode_max_time, dtype=np.float32)
-        self._done_history = np.ones(self._episode_max_time, dtype=np.bool_)
-
-    def _record(self, next_obs: np.ndarray, act: np.ndarray, reward: np.ndarray, done: np.ndarray, time: int):
-        """This function is used to record transition tuple onto a time point.
-        
-        Args:
-            next_obs (np.ndarray): Next state
-            act (np.ndarray): Action
-            reward (np.ndarray): Reward
-            done (np.ndarray): Done flag
-            time (int): The time index to save transition
-        """
-        self._obs_history[time+1] = next_obs
-        self._act_history[time] = act
-        self._reward_history[time] = reward
-        self._done_history[time] = done
+        self.clear() # clears everything 
 
     def clear(self):
         """Clear the buffer and all calculated stuff. Also, reset the environment.
         """
-        self.last_episode_score = 0
-        self.episode_score = 0
-        self.observation, _ = self._env.reset()   
         self._size = 0
         self._not_computed = 0
         self._buffer = {field: deque(maxlen=self._buffer_capacity) for field in self._fields}     
@@ -234,57 +178,3 @@ class EpisodeMemory(object):
             indices = indices = list(range(self._size-1, self._size-1-remainder, -1)) + multiple*list(range(self._size))
         return self._sample_by_indices(indices)
 
-    def _adjust_action(self, action):
-        """This function takes action output of network bounded in (-1, 1)
-        and converts it into environment bounds for action taking. """
-        l, h = self._env.action_space.low, self._env.action_space.high
-        return (h+l)/2 + (h-l)/2 * action
-
-    def one_step_rollout(self, agent: Callable, record=False):
-        """Rollout in the environment with agent and save transitions to memory.
-
-        Args:
-            agent (Agent): Agent object with step method. 
-            record (bool, optional): Recording history flag. Defaults to False.
-
-        Returns:
-            float: Last episode score
-        """
-        action, extra = agent.step(self.observation)
-        if action is None: # it means agent says randomly act.
-            # action = self._env.action_space.sample()
-            action = np.tanh(np.random.randn(*self._env.action_space.shape)) # random action between (-1, 1)
-        # next_observation, reward, done, truncated, _ = self._env.step(action)
-        next_observation, reward, done, truncated, _ = self._env.step(self._adjust_action(action))
-        is_episode_end = done or truncated
-        if record:
-            if self._episode_time == 0:
-                self._clear_record()
-            self._record(next_observation, action, reward, done, self._episode_time)
-        self._total_env_interactions += 1
-        self._episode_time += 1
-        self.episode_score += reward
-        self._insert_transition(
-            np.float32(self.observation), 
-            np.float32(action), 
-            np.float32(reward),
-            np.float32(next_observation), 
-            done,
-            truncated, 
-            *extra
-        )
-        # compute_period=-1 for off-policy algos. compute on episode end
-        # compute_period>0 for on-policy algos, compute when the time is ok
-        compute_flag = (self._compute_period==-1 and is_episode_end) or (self._total_env_interactions % self._compute_period == 0)
-        if compute_flag:
-            self._compute(agent) 
-        if is_episode_end: # end of the episode
-            self.observation, _ = self._env.reset()
-            agent.reset()
-            self.log("episode_score", self.episode_score)
-            print('\rTime step {}\tScore: {:.2f}'.format(self._total_env_interactions, self.episode_score), end="")
-            self.last_episode_score = self.episode_score
-            self.episode_score = 0
-        else:
-            self.observation = next_observation
-        return self.last_episode_score 

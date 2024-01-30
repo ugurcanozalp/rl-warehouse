@@ -16,7 +16,7 @@ from ..agent import Agent
 from ..nets import policy_map, probabilistic_qvalue_map
 
 # beta parameter are usually tried from one of them -> 0.1, 0.4, 0.7, 1.0
-# beta-> Ant = 0.7, Hopper = 0.7, Walker2d = 0.4, HalfCheetah = 0.1, Humanoid = 0.7 (maybe 0.4)
+# beta-> Ant = 1.0, Hopper = 0.7, Walker2d = 0.4, Humanoid = 0.7, HalfCheetah = 0.1
 
 class PRAC(Agent):
     
@@ -53,9 +53,9 @@ class PRAC(Agent):
         self._pi_lr = pi_lr
         self._max_grad_norm = max_grad_norm
         # networks
-        self._pi = policy_map[pi_net](**self.memory.env_info, dropout=self._dropout).to(self._device)
-        self._q = probabilistic_qvalue_map[q_net](dropout=self._dropout, **self.memory.env_info).to(self._device)
-        self._q_target = probabilistic_qvalue_map[q_net](dropout=self._dropout, **self.memory.env_info).to(self._device)
+        self._pi = policy_map[pi_net](**self.env_info, dropout=self._dropout).to(self._device)
+        self._q = probabilistic_qvalue_map[q_net](dropout=self._dropout, **self.env_info).to(self._device)
+        self._q_target = probabilistic_qvalue_map[q_net](dropout=self._dropout, **self.env_info).to(self._device)
         #
         # no grad for target networks
         for param in self._q_target.parameters():
@@ -63,8 +63,6 @@ class PRAC(Agent):
         self._hard_update(self._q, self._q_target)
         # optimizers
         self._construct_optimizers(pi_lr, q_lr)
-        # log hyperparameters
-        self.log_hparams(self.hparams) # log available variables..
         
     @property
     def extra_fields(self):
@@ -85,7 +83,7 @@ class PRAC(Agent):
 
     @th.no_grad()
     def step(self, observation: np.ndarray):
-        if self.total_env_interactions < self._start_steps:
+        if self._total_env_interactions < self._start_steps:
             action = None
         else:
             observation_ = th.from_numpy(observation).unsqueeze(0).float().to(self.device)
