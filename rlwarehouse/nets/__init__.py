@@ -3,6 +3,7 @@ from .policy import ContinuousMLPPolicy
 from .value import ContinuousMLPValue
 from .qvalue import ContinuousMLPQValue
 from .probabilistic_qvalue import ContinuousMLPStochasticQValue
+from .probabilistic_value import ContinuousMLPStochasticValue
 from .model import ContinuousMLPModel
 from .reward import ContinuousMLPReward
 

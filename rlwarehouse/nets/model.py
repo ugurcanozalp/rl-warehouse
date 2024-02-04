@@ -18,6 +18,6 @@ class ContinuousMLPModel(nn.Module):
         x = th.concat([observation, action], dim=-1)
         x = self.fc1(x)
         x = self.fc2(x)
-        ds = self.ds_fc(x)
-        ds_distr = self.ds_head(ds)
+        x = self.ds_fc(x)
+        ds_distr = self.ds_head(x)
         return ds_distr

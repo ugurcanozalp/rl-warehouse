@@ -1,16 +1,11 @@
 
-import os
-from collections import OrderedDict, deque, namedtuple
 from typing import Iterator, List, Tuple, Callable, Any
 from argparse import ArgumentParser
 
-import gymnasium as gym
 import math
 import numpy as np
 import torch as th
-import  pytorch_lightning as pl
 from torch.optim import Adam, AdamW, Optimizer
-from torch.utils.data import DataLoader
 
 from ..agent import Agent
 from ..nets import policy_map, qvalue_map
@@ -122,11 +117,11 @@ class SAC(Agent):
                 next_action = next_action_distr.sample()
                 next_entropy = - next_action_distr.log_prob(next_action)
                 if self._pi.independent_actions: 
-                    next_entropy = next_entropy.sum(dim=-1)
+                    next_entropy = next_entropy.sum(dim=-1, keepdim=True)
                 next_qvalue1 = self._q1_target(next_observation, next_action)
                 next_qvalue2 = self._q2_target(next_observation, next_action)
                 next_qvalue_target = th.min(next_qvalue1, next_qvalue2) + self._alpha * next_entropy
-                qvalue = reward + (self._gamma * next_qvalue_target * done.logical_not())
+                qvalue = reward.unsqueeze(-1) + self._gamma * next_qvalue_target * done.logical_not().unsqueeze(-1)
             # update critics
             self._q_optim.zero_grad()
             qvalue1_est = self._q1(observation, action)
@@ -134,7 +129,7 @@ class SAC(Agent):
             qvalue2_est = self._q2(observation, action)
             qvalue2_loss = 0.5*th.nn.functional.mse_loss(qvalue2_est, qvalue)
             qvalue_loss = qvalue1_loss + qvalue2_loss
-            avg_q_var = 0.5*(qvalue1_est - qvalue2_est).square().mean(dim=0)
+            avg_q_var = 0.5*(qvalue1_est - qvalue2_est).square().mean()
             qvalue_loss.backward()
             self._q_optim.step()
             self._soft_update(self._q1, self._q1_target)
@@ -148,7 +143,7 @@ class SAC(Agent):
             action_imaginary = action_distr.rsample()
             entropy = - action_distr.log_prob(action_imaginary)
             if self._pi.independent_actions: 
-                entropy = entropy.sum(dim=-1)
+                entropy = entropy.sum(dim=-1, keepdim=True)
             q_imaginary = th.min(self._q1(observation, action_imaginary), self._q2(observation, action_imaginary))
             pi_loss = -(q_imaginary + self._alpha * entropy).mean()
             pi_loss.backward()

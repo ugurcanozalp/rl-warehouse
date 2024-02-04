@@ -1,22 +1,18 @@
 
-import os
-from collections import OrderedDict, deque, namedtuple
 from typing import Iterator, List, Tuple, Callable, Any
 from argparse import ArgumentParser
 
-import gymnasium as gym
 import math
 import numpy as np
 import torch as th
-import  pytorch_lightning as pl
 from torch.optim import Adam, AdamW, Optimizer
-from torch.utils.data import DataLoader
 
 from ..agent import Agent
 from ..nets import policy_map, probabilistic_qvalue_map
 
 # beta parameter are usually tried from one of them -> 0.1, 0.4, 0.7, 1.0
-# beta-> Ant = 1.0, Hopper = 0.7, Walker2d = 0.4, Humanoid = 0.7, HalfCheetah = 0.1
+# beta->            Ant = 1.0, Hopper = 0.7, Walker2d = 0.4, Humanoid = 1.0, HalfCheetah = 0.1
+
 
 class PRAC(Agent):
     
@@ -27,7 +23,7 @@ class PRAC(Agent):
         target_entropy: float = -4, 
         gamma: float = 0.99, 
         alpha: float = 0.2, 
-        beta: float = 0.2, 
+        beta: float = 0.4, 
         dropout: float = 0.01, 
         tau: float = 0.005, 
         batch_per_step: int = 1, 
@@ -39,7 +35,6 @@ class PRAC(Agent):
     ):
         super().__init__(**memory_kwargs)
         # hyperparameters
-        # self._target_entropy = -0.5 * np.prod(self.memory.env_info["action_shape"])
         self._gamma = gamma
         self._autotune = autotune
         self._target_entropy = target_entropy
@@ -115,26 +110,22 @@ class PRAC(Agent):
                     next_entropy = next_entropy.sum(dim=-1, keepdim=True)  
                 # take min of two, like sac
                 next_q_distr = self._q_target(next_observation, next_action)
-                next_q_target = (next_q_distr.mean - self._beta * next_q_distr.stddev) * done.logical_not().unsqueeze(-1) + self._alpha * next_entropy
-                q_target_sample = reward.unsqueeze(-1) + self._gamma * next_q_target 
+                next_value_target = (next_q_distr.mean - self._beta * next_q_distr.stddev + self._alpha * next_entropy) * done.logical_not().unsqueeze(-1) 
+                q_target_sample = reward.unsqueeze(-1) + self._gamma * next_value_target 
             # critic learning behavioral policy 
             self._q_optim.zero_grad()
             q_distr = self._q(observation, action)
-            q_sample = q_distr.rsample()
             # critic update calculations
-            q_entropy = - q_distr.log_prob(q_sample).squeeze(-1)
             q_crossentropy = - q_distr.log_prob(q_target_sample) # batch, 1
-            q_var = q_distr.variance.squeeze(-1)
             q_obj = q_crossentropy
             q_loss = q_obj.mean()
             self.log_grad_step("q_loss", q_loss)
-            self.log_grad_step("q_entropy_avg", q_entropy.mean())
-            self.log_grad_step("q_var_avg", q_var.mean())
+            self.log_grad_step("q_entropy_avg", q_distr.entropy().mean())
+            self.log_grad_step("q_std_avg", q_distr.stddev.mean())
             q_loss.backward()
             #th.nn.utils.clip_grad_norm_(self._q.parameters(), self._max_grad_norm)
             self._q_optim.step()
             self._soft_update(self._q, self._q_target)
-            # 
             # on-policy updates
             self._pi_optim.zero_grad()
             action_distr = self._pi(observation)
@@ -148,7 +139,8 @@ class PRAC(Agent):
             pi_loss = pi_obj.mean()
             self.log_grad_step("pi_loss", pi_loss)
             self.log_grad_step("q_onpolicy_avg", q_onpolicy.mean())
-            # self.log("q_onpolicy_entropy_avg", q_onpolicy_entropy.mean())
+            self.log("q_onpolicy_entropy_avg", q_onpolicy_distr.entropy().mean())
+            self.log("q_onpolicy_std_avg", q_onpolicy_distr.stddev.mean())
             self.log_grad_step("pi_entropy_avg", pi_entropy.mean())
             pi_loss.backward()
             #th.nn.utils.clip_grad_norm_(self._pi.parameters(), self._max_grad_norm)
@@ -202,14 +194,13 @@ class PRAC(Agent):
         parser.add_argument("--target_entropy", type=float, default=-4)
         parser.add_argument("--gamma", type=float, default=0.99)
         parser.add_argument("--alpha", type=float, default=0.2)
-        parser.add_argument("--beta", type=float, default=0.2)
+        parser.add_argument("--beta", type=float, default=0.4)
         parser.add_argument("--dropout", type=float, default=0.01)
         parser.add_argument("--tau", type=float, default=0.005)
         parser.add_argument("--batch_per_step", type=int, default=1)
         parser.add_argument("--target_update_interval", type=int, default=1)
         parser.add_argument("--pi_lr", type=float, default=3e-4)
         parser.add_argument("--q_lr", type=float, default=1e-3)
-        parser.add_argument("--max_grad_norm", type=float, default=1.0)
         parser.add_argument("--batch_size", type=int, default=256)
         return parser
 

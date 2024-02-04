@@ -17,4 +17,4 @@ class ContinuousMLPQValue(nn.Module):
         x = self.fc1(x)
         x = self.fc2(x)
         x = self.q_fc(x)
-        return x.squeeze(-1)
+        return x

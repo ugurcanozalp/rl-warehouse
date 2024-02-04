@@ -1,15 +1,10 @@
 
-import os
-from collections import OrderedDict, deque, namedtuple
 from typing import Iterator, List, Tuple, Callable, Any
 from argparse import ArgumentParser
 
-import gymnasium as gym
 import numpy as np
 import torch as th
-import  pytorch_lightning as pl
 from torch.optim import Adam, AdamW, Optimizer
-from torch.utils.data import DataLoader
 
 from ..agent import Agent
 from ..nets import policy_map, value_map
@@ -26,12 +21,12 @@ class PPO(Agent):
         alpha: float = 5e-4, 
         epochs_per_rollout: int = 10, 
         steps_per_rollout: int = 2048, 
-        clip_ratio: int = 0.4, 
+        clip_ratio: int = 0.2, 
         pi_lr: float = 3e-4,
         v_lr: float = 3e-4, 
         vf_coef: float = 0.5, 
         max_grad_norm: float = 0.5, 
-        batch_size: int = 64, 
+        batch_size: int = 256, 
         **memory_kwargs
     ):
         # override memory_kwargs for ppo
@@ -126,7 +121,7 @@ class PPO(Agent):
                     cross_log_prob = cross_log_prob.sum(dim=-1)
                     entropy = entropy.sum(dim=-1)
                 value = self._v(observation)
-                # policy loss        
+                # policy loss 
                 ratio = th.exp(cross_log_prob - log_prob)
                 gae_normalized = (gae - gae.mean() ) / (gae.std() + 1e-6)
                 clip_adv = th.clamp(ratio, 1 - self._clip_ratio, 1 + self._clip_ratio) * gae_normalized
@@ -207,7 +202,7 @@ class PPO(Agent):
         parser.add_argument("--v_lr", type=float, default=3e-4)
         parser.add_argument("--vf_coef", type=float, default=0.5)
         parser.add_argument("--max_grad_norm", type=float, default=0.5)
-        parser.add_argument("--batch_size", type=int, default=128)
+        parser.add_argument("--batch_size", type=int, default=256)
         return parser
 
 if __name__=="__main__":

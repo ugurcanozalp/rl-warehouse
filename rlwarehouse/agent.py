@@ -2,15 +2,13 @@
 """
 
 from argparse import ArgumentParser
-import json
 import os
-import time
 import math
 import numpy as np
 from datetime import datetime
 from typing import Tuple, Union, Dict, Any
 
-import gymnasium
+import gymnasium as gym
 import torch as th
 from tensorboardX import SummaryWriter
 
@@ -39,22 +37,30 @@ class Agent(object):
     def __init__(self, 
                  env_name: str, 
                  device: str = "cpu", 
-                 compute_period: int = 0, 
+                 compute_period: int = -1, 
                  start_steps: int = 10000, 
+                 wrapper: gym.ObservationWrapper = None, 
                  env_kwargs: Dict = dict(), 
                  **memory_kwargs
                  ):
         """Summary
         
         Args:
+            env_name (str): Name of the environment that agent lives in. 
             device (str, optional): Device in which algorithm works on (cpu, cuda, etc.)
+            compute_period (int): How frequenty derived fields are computed. (-1 for off-policy algos)
+            start_steps (int): Number of time-steps to act on environment before learning starts. 
+            wrapper (gym.ObservationWrapper, optional): Environment wrapper. 
+            env_kwargs (Dict, optional): Environment parameters to use during `gym.make` call.  
             **memory_kwargs: Other arguments for episode memory such like environment, size etc. 
         """
         self._device = device
         self._start_steps = start_steps
         self._total_grad_steps = 0 # increment it as you learn from a single batch
         self._env_name = env_name
-        self._env = gymnasium.make(env_name, render_mode="none", **env_kwargs)
+        self._env = gym.make(env_name, render_mode="human", **env_kwargs)
+        if wrapper is not None:
+            self._env = wrapper(self._env) # if there is a wrapper.
         self._episode_max_time = self._env._max_episode_steps # environment time limit
         self._episode_time = 0 # episode counter
         self._compute_period = compute_period
@@ -63,8 +69,8 @@ class Agent(object):
         self._logger = None
         self.memory = EpisodeMemory(device=self._device, 
                                     extra_fields=self.extra_fields, 
-                                     derived_fields=self.derived_fields, 
-                                     **memory_kwargs)
+                                    derived_fields=self.derived_fields, 
+                                    **memory_kwargs)
 
     @property   
     def device(self) -> str:
@@ -264,7 +270,6 @@ class Agent(object):
         action, extra = self.step(self._observation)
         if action is None: # it means self says randomly act.
             action = np.tanh(np.random.randn(*self._env.action_space.shape)) # random action between (-1, 1)
-        # next_observation, reward, done, truncated, _ = self._env.step(action)
         next_observation, reward, done, truncated, _ = self._env.step(self._adjust_action(action))
         is_episode_end = done or truncated
         if record:
@@ -294,16 +299,14 @@ class Agent(object):
             self._observation = next_observation
         return self._last_episode_score 
     
-    def train(self, max_steps: int = int(5e5), 
+    def train(self, max_steps: int = int(5e6), 
             test_interval: int = None, 
         ):
         """Main train loop.
         
         Args:
             max_steps (int, optional): Maximum number steps for training
-        
-        Returns:
-            TYPE: Description
+            test_inverval(int, optional): How frequently test episodes are conducted. 
         """
         self._terminate_episode() # initial call for env reset.
         for i in range(max_steps): 

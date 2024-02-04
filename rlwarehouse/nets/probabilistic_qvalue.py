@@ -11,7 +11,6 @@ class ContinuousMLPStochasticQValue(nn.Module):
         self.fc1 = nn.Sequential(nn.Linear(num_inputs, 256), nn.Dropout(dropout), nn.LayerNorm(256), nn.ReLU())
         self.fc2 = nn.Sequential(nn.Linear(256, 256), nn.Dropout(dropout), nn.LayerNorm(256), nn.ReLU())
         self.q_fc = nn.Linear(256, 2)
-        #self.q_fc.bias.data[0].fill_(0)
         self.q_fc.bias.data[1].fill_(0)
         self.q_head = GaussianHead(1)
 
@@ -20,5 +19,5 @@ class ContinuousMLPStochasticQValue(nn.Module):
         x = self.fc1(x)
         x = self.fc2(x)
         x = self.q_fc(x)
-        x = self.q_head(x)
-        return x
+        q_distr = self.q_head(x)
+        return q_distr

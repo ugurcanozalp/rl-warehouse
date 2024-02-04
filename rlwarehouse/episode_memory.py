@@ -51,36 +51,6 @@ class EpisodeMemory(object):
         self._size = 0
         self._not_computed = 0
         self._buffer = {field: deque(maxlen=self._buffer_capacity) for field in self._fields}     
-
-    def log(self, log_name: str, log_value: float, step: int = None):
-        """Log a parameter during training
-
-        Args:
-            log_name (str): Name of the logged parameter
-            log_value (float): Value of the logged parameter
-            step (int): Step index
-        """
-        step = self._total_env_interactions if step is None else step
-        self._logger.add_scalar(log_name, log_value, step)
-    
-    def log_hparams(self, dict: Dict[str, Union[bool, str, float, int]]):
-        """Log a hyperparameter
-
-        Args:
-            dict (Dict): Dictionary to log
-        """
-        text = " | hyperparam | value | \n | ----------- | ----------- | " + \
-            "\n".join([f" | {k} | {v:2.4f} | " for k, v in dict.items()])
-        self._logger.add_text("hyperparameters", text, 0)
-
-    def log_text(self, description: str, text: str):
-        """Log a textual info
-
-        Args:
-            description (str): Text description
-            text (str): Text to be logged
-        """
-        self._logger.add_text(description, text)
         
     def __getitem__(self, key):
         if key in self._fields:
