@@ -122,6 +122,9 @@ class Agent(object):
             "action_space": self._env.action_space, 
         }
     
+    def time_noncomputed_to_global(self, t):
+        return self._total_env_interactions + t + 1 - self.memory._not_computed
+
     def _terminate_episode(self):
         self._observation, _ = self._env.reset()
         self.reset()
@@ -288,7 +291,8 @@ class Agent(object):
         )
         # compute_period=-1 for off-policy algos. compute on episode end
         # compute_period>0 for on-policy algos, compute when the time is ok
-        compute_flag = (self._compute_period==-1 and is_episode_end) or (self._total_env_interactions % self._compute_period == 0)
+        # compute_flag = (self._compute_period==-1 and is_episode_end) or (self._total_env_interactions % self._compute_period == 0)
+        compute_flag = is_episode_end if self._compute_period==-1 else (self._total_env_interactions % self._compute_period == 0)
         if compute_flag:
             self.memory._compute(self) 
         if is_episode_end: # end of the episode

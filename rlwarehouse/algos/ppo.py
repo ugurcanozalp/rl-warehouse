@@ -166,7 +166,8 @@ class PPO(Agent):
         cum_return, gae = np.zeros_like(reward), np.zeros_like(reward)
         _, (_, last_value) = self.step(next_observation[-1])
         for t in reversed(range(self.memory._not_computed)):
-            t_global = self._total_env_interactions + t+1 - self.memory._not_computed
+            # t_global = self._total_env_interactions + t + 1 - self.memory._not_computed
+            t_global = self.time_noncomputed_to_global(t)
             if t == self.memory._not_computed-1: # first time for calculation
                 cum_return_next = reward[-1] + not_done[-1] * self._gamma * last_value  
                 gae_next = reward[-1] + self._gamma * last_value - value[-1] # delta at last time...
