@@ -1,6 +1,5 @@
 
 from argparse import ArgumentParser
-import pytorch_lightning as pl 
 
 from rlwarehouse.algos import SAC
 

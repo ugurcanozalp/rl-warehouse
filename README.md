@@ -5,10 +5,10 @@ This repository is my reinforcement learning framework based on PyTorch and Tens
 You can find scripts in scripts folder. These scripts can be manipulated as much as required, and can be converted to a jupyter notebook etc. Example usage for PRAC training: 
 
 ```bash
-python -m scripts.prac --env_name Hopper-v4 --autotune --target_entropy -1 --beta 0.7
+python -m scripts.mac --env_name Hopper-v4 --autotune --target_entropy -1 --beta 0.7
 ```
 
 ## Algorithms implemented
-- [x] Probabilistic Actor Critic (almost ready)
+- [x] Monarchic Actor Critic (almost ready)
 - [x] [Soft Actor Critic](https://arxiv.org/abs/1812.05905v2)
 - [x] [Proximal Policy Optimization](https://arxiv.org/abs/1707.06347)

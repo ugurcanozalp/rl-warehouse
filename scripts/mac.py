@@ -1,12 +1,12 @@
 
 from argparse import ArgumentParser
 
-from rlwarehouse.algos import PPO
+from rlwarehouse.algos import MAC
 
 parser = ArgumentParser()
-parser = PPO.add_model_specific_args(parser)
+parser = MAC.add_model_specific_args(parser)
 args = parser.parse_args()
 dict_args = vars(args)
-agent = PPO(**dict_args)
+agent = MAC(**dict_args)
 
 agent.experiment()

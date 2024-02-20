@@ -11,10 +11,13 @@ from ..agent import Agent
 from ..nets import policy_map, probabilistic_qvalue_map
 
 # beta parameter are usually tried from one of them -> 0.1, 0.4, 0.7, 1.0
-# beta->            Ant = 1.0, Hopper = 0.7, Walker2d = 0.4, Humanoid = 1.0, HalfCheetah = 0.1
+# beta->            Ant = 1.0, Hopper = 0.4 (or 0.7), Walker2d = 0.4, Humanoid = 0.7 (or 1.0), HalfCheetah = 0.1
 
 
-class PRAC(Agent):
+class MAC(Agent):
+    
+    """Monarchic Actor-Critic
+    """
     
     def __init__(self, 
         pi_net: str = "continuous_mlp2", 
