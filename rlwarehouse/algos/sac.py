@@ -71,9 +71,9 @@ class SAC(Agent):
     
     @property
     def extra_fields(self):
-        """No extra field is required for SAC algorithm.
+        """On policy estimated log_prob and value is necessary for value bias estimation
         """
-        return ()
+        return ("log_prob", "value")
 
     @property
     def derived_fields(self):
@@ -86,15 +86,28 @@ class SAC(Agent):
         action = distr.rsample()
         return action
 
+    def forward(self, observation: th.Tensor):
+        distr = self._pi(observation)
+        action = distr.rsample()
+        log_prob = distr.log_prob(action)
+        if self._pi.independent_actions: 
+            log_prob = log_prob.sum(dim=-1)
+        value = th.min(self._q1(observation, action), self._q2(observation, action)).squeeze(-1) - self._alpha * log_prob
+        return action, (log_prob, value)
+    
     @th.no_grad()
     def step(self, observation: np.ndarray):
         if self._total_env_interactions < self._start_steps:
             action = None
+            log_prob = 0
+            value = 0
         else:
             observation_ = th.from_numpy(observation).unsqueeze(0).float().to(self.device)
-            action_ = self.forward(observation_)
+            action_, (log_prob_, value_) = self.forward(observation_)
             action = action_.squeeze(0).cpu().numpy()
-        return action, ()
+            log_prob = log_prob_.squeeze(0).cpu().numpy()
+            value = value_.squeeze(0).cpu().numpy()
+        return action, (log_prob, value)
 
     def reset(self):
         pass
@@ -111,7 +124,7 @@ class SAC(Agent):
         # train critics
         for _ in range(self._batch_per_step):
             self._total_grad_steps += 1
-            observation, action, reward, next_observation, done, truncated = self.memory.sample(self._batch_size)
+            observation, action, reward, next_observation, done, truncated, _, _ = self.memory.sample(self._batch_size)
             with th.no_grad():
                 next_action_distr = self._pi(next_observation)
                 next_action = next_action_distr.sample()
@@ -172,7 +185,27 @@ class SAC(Agent):
         next_observation, 
         done, 
         truncated, 
+        log_prob, 
+        value
     ):
+        not_done = np.logical_not(done)
+        cum_return = np.zeros_like(reward)
+        _, (_, last_value) = self.step(next_observation[-1])
+        for t in reversed(range(self.memory._not_computed)):
+            # t_global = self._total_env_interactions + t+1 - self.memory._not_computed
+            t_global = self.time_noncomputed_to_global(t)
+            if t == self.memory._not_computed-1: # first time for calculation
+                cum_return_next = reward[-1] - self._alpha * log_prob[-1] + not_done[-1] * self._gamma * last_value  
+            else:
+                cum_return_next = cum_return[t+1] 
+            if truncated[t]:
+                cum_return[t] = value[t]
+            else:
+                cum_return[t] = reward[t] - self._alpha * log_prob[t] + not_done[t] * self._gamma * cum_return_next
+            if t==0: # if it is first step of rollout
+                self.log("cum_return", cum_return[t], t_global)
+                self.log("value_estimate", value[t], t_global)
+                self.log("return_error", value[t]-cum_return[t], t_global)
         return ()
     
     @staticmethod

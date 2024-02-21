@@ -81,7 +81,7 @@ class MAC(Agent):
         if self._pi.independent_actions: 
             log_prob = log_prob.sum(dim=-1)
         q_dist = self._q(observation, action)
-        value = q_dist.mean.squeeze(-1) - self._alpha * log_prob
+        value = (q_dist.mean - self._beta * q_dist.stddev).squeeze(-1) - self._alpha * log_prob
         return action, (log_prob, value)
 
     @th.no_grad()
@@ -195,9 +195,6 @@ class MAC(Agent):
         log_prob, 
         value
     ):
-        #print('ever inside')
-        #print(self.memory._not_computed)
-        #print('+++')
         not_done = np.logical_not(done)
         cum_return = np.zeros_like(reward)
         _, (_, last_value) = self.step(next_observation[-1])
@@ -213,7 +210,6 @@ class MAC(Agent):
             else:
                 cum_return[t] = reward[t] - self._alpha * log_prob[t] + not_done[t] * self._gamma * cum_return_next
             if t==0: # if it is first step of rollout
-                # print('ever log')
                 self.log("cum_return", cum_return[t], t_global)
                 self.log("value_estimate", value[t], t_global)
                 self.log("return_error", value[t]-cum_return[t], t_global)
