@@ -11,7 +11,7 @@ from ..agent import Agent
 from ..nets import policy_map, probabilistic_qvalue_map
 
 # beta parameter are usually tried from one of them -> 0.1, 0.4, 0.7, 1.0
-# beta->            Ant = 1.0, Hopper = 0.4 (or 0.7), Walker2d = 0.4, Humanoid = 0.7 (or 1.0), HalfCheetah = 0.1
+# beta->            Ant = 1.0, Hopper = 0.7 (or 0.4), Walker2d = 0.4, Humanoid = 0.7 (or 1.0), HalfCheetah = 0.1
 
 
 class MAC(Agent):
@@ -25,7 +25,7 @@ class MAC(Agent):
         autotune: bool = True, 
         target_entropy: float = -4, 
         gamma: float = 0.99, 
-        alpha: float = 0.2, 
+        alpha: float = 0.1, 
         beta: float = 0.4, 
         dropout: float = 0.01, 
         tau: float = 0.005, 
@@ -122,7 +122,8 @@ class MAC(Agent):
                     next_entropy = next_entropy.sum(dim=-1, keepdim=True)  
                 # take min of two, like sac
                 next_q_distr = self._q_target(next_observation, next_action)
-                next_value_target = (next_q_distr.mean - self._beta * next_q_distr.stddev + self._alpha * next_entropy) * done.logical_not().unsqueeze(-1) 
+                next_value_target = (next_q_distr.mean - self._beta * next_q_distr.stddev + self._alpha * next_entropy) * done.logical_not().unsqueeze(-1)
+                # next_value_target = (next_q_distr.mean - 0.5*self._beta * next_q_distr.variance + self._alpha * next_entropy) * done.logical_not().unsqueeze(-1) 
                 q_target_sample = reward.unsqueeze(-1) + self._gamma * next_value_target 
             # critic learning behavioral policy 
             self._q_optim.zero_grad()
@@ -147,6 +148,7 @@ class MAC(Agent):
                 pi_entropy = pi_entropy.sum(dim=-1, keepdim=True)
             q_onpolicy_distr = self._q(observation, action_onpolicy)
             q_onpolicy = q_onpolicy_distr.mean - self._beta * q_onpolicy_distr.stddev
+            # q_onpolicy = q_onpolicy_distr.mean - 0.5*self._beta * q_onpolicy_distr.variance
             pi_obj = - (q_onpolicy + self._alpha * pi_entropy)
             pi_loss = pi_obj.mean()
             self.log_grad_step("pi_loss", pi_loss)
@@ -221,11 +223,11 @@ class MAC(Agent):
         parser = Agent.add_model_specific_args(parser)
         parser.add_argument("--pi_net", type=str, default="continuous_mlp2")
         parser.add_argument("--q_net", type=str, default="continuous_mlp2")
-        parser.add_argument("--autotune", action="store_true" ,default=True)
+        parser.add_argument("--autotune", action="store_true", default=False)
         parser.add_argument('--no-autotune', dest="autotune", action="store_false")
         parser.add_argument("--target_entropy", type=float, default=-4)
         parser.add_argument("--gamma", type=float, default=0.99)
-        parser.add_argument("--alpha", type=float, default=0.2)
+        parser.add_argument("--alpha", type=float, default=0.1)
         parser.add_argument("--beta", type=float, default=0.4)
         parser.add_argument("--dropout", type=float, default=0.01)
         parser.add_argument("--tau", type=float, default=0.005)

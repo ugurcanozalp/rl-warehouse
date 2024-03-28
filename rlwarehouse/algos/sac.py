@@ -19,7 +19,7 @@ class SAC(Agent):
         autotune: bool = False, 
         target_entropy: float = -4, 
         gamma: float = 0.99,
-        alpha: float = 0.2, 
+        alpha: float = 0.1, 
         tau: float = 0.005, 
         batch_per_step: int = 1, 
         pi_lr: float = 3e-4,
@@ -218,7 +218,7 @@ class SAC(Agent):
         parser.add_argument('--no-autotune', dest="autotune", action="store_false")
         parser.add_argument("--target_entropy", type=float, default=-4)
         parser.add_argument("--gamma", type=float, default=0.99)
-        parser.add_argument("--alpha", type=float, default=0.2)
+        parser.add_argument("--alpha", type=float, default=0.1)
         parser.add_argument("--tau", type=float, default=0.005)
         parser.add_argument("--batch_per_step", type=int, default=1)
         parser.add_argument("--target_update_interval", type=int, default=1)
