@@ -19,7 +19,7 @@ class SAC(Agent):
         autotune: bool = False, 
         target_entropy: float = -4, 
         gamma: float = 0.99,
-        alpha: float = 0.1, 
+        alpha: float = 0.2, 
         tau: float = 0.005, 
         batch_per_step: int = 1, 
         pi_lr: float = 3e-4,
@@ -84,15 +84,10 @@ class SAC(Agent):
     def forward(self, observation: th.Tensor):
         distr = self._pi(observation)
         action = distr.rsample()
-        return action
-
-    def forward(self, observation: th.Tensor):
-        distr = self._pi(observation)
-        action = distr.rsample()
         log_prob = distr.log_prob(action)
         if self._pi.independent_actions: 
             log_prob = log_prob.sum(dim=-1)
-        value = th.min(self._q1(observation, action), self._q2(observation, action)).squeeze(-1) - self._alpha * log_prob
+        value = th.mean(self._q1(observation, action), self._q2(observation, action)).squeeze(-1) - self._alpha * log_prob
         return action, (log_prob, value)
     
     @th.no_grad()
@@ -177,7 +172,7 @@ class SAC(Agent):
             [{'params': self._q1.parameters()}, {'params': self._q2.parameters()}], 
             lr=q_lr
         )
-
+    
     def compute_function(self,
         observation, 
         action, 
@@ -190,12 +185,12 @@ class SAC(Agent):
     ):
         not_done = np.logical_not(done)
         cum_return = np.zeros_like(reward)
-        _, (_, last_value) = self.step(next_observation[-1])
         for t in reversed(range(self.memory._not_computed)):
             # t_global = self._total_env_interactions + t+1 - self.memory._not_computed
             t_global = self.time_noncomputed_to_global(t)
             if t == self.memory._not_computed-1: # first time for calculation
-                cum_return_next = reward[-1] - self._alpha * log_prob[-1] + not_done[-1] * self._gamma * last_value  
+                _, (_, last_value) = self.step(next_observation[-1])
+                cum_return_next = not_done[-1] * last_value  
             else:
                 cum_return_next = cum_return[t+1] 
             if truncated[t]:
@@ -218,7 +213,7 @@ class SAC(Agent):
         parser.add_argument('--no-autotune', dest="autotune", action="store_false")
         parser.add_argument("--target_entropy", type=float, default=-4)
         parser.add_argument("--gamma", type=float, default=0.99)
-        parser.add_argument("--alpha", type=float, default=0.1)
+        parser.add_argument("--alpha", type=float, default=0.2)
         parser.add_argument("--tau", type=float, default=0.005)
         parser.add_argument("--batch_per_step", type=int, default=1)
         parser.add_argument("--target_update_interval", type=int, default=1)
