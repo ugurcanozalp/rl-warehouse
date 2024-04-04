@@ -1,12 +1,12 @@
 
 from argparse import ArgumentParser
 
-from rlwarehouse.algos import MAC
+from rlwarehouse.algos import OAPC
 
 parser = ArgumentParser()
-parser = MAC.add_model_specific_args(parser)
+parser = OAPC.add_model_specific_args(parser)
 args = parser.parse_args()
 dict_args = vars(args)
-agent = MAC(**dict_args)
+agent = OAPC(**dict_args)
 
 agent.experiment()

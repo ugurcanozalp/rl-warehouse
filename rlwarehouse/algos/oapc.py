@@ -10,15 +10,12 @@ from torch.optim import Adam, AdamW, Optimizer
 from ..agent import Agent
 from ..nets import policy_map, probabilistic_qvalue_map
 
-# beta parameter are usually tried from one of them -> 0.1, 0.4, 0.7, 1.0
-# beta->            Ant = 1.0, Hopper = 0.7 (or 0.4), Walker2d = 0.4, Humanoid = 0.7 (or 1.0), HalfCheetah = 0.1
+# optbeta        ->        Ant = 1.0, Hopper = 0.5, Walker2d = 0.25, Humanoid = 0.75, HalfCheetah = 0.25
+# target entropy ->        Ant = -4 , Hopper = -1 , Walker2d = -3  , Humanoid = -2  , HalfCheetah = -6
 
-# optbeta ->        Ant = 1.0, Hopper = 0.5, Walker2d = 0.25, Humanoid = 0.75, HalfCheetah = 0.25
-# t. entr ->        Ant = -4 , Hopper = -1 , Walker2d = -3  , Humanoid = -2  , HalfCheetah = -6
-
-class MAC(Agent):
+class OAPC(Agent):
     
-    """Monarchic Actor-Critic
+    """Optimistic Actor Pessimistic Critic
     """
     
     def __init__(self, 
