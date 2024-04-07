@@ -1,12 +1,12 @@
 
 from argparse import ArgumentParser
 
-from rlwarehouse.algos import OAPC
+from rlwarehouse.algos import DBAC
 
 parser = ArgumentParser()
-parser = OAPC.add_model_specific_args(parser)
+parser = DBAC.add_model_specific_args(parser)
 args = parser.parse_args()
 dict_args = vars(args)
-agent = OAPC(**dict_args)
+agent = DBAC(**dict_args)
 
 agent.experiment()
