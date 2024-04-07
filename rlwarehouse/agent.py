@@ -4,6 +4,7 @@
 from argparse import ArgumentParser
 import os
 import math
+import random
 import numpy as np
 from datetime import datetime
 from typing import Tuple, Union, Dict, Any
@@ -36,10 +37,15 @@ class Agent(object):
     
     def __init__(self, 
                  env_name: str, 
+                 seed: int = -1, 
+                 num_threads: int = -1, 
                  device: str = "cpu", 
+                 max_train_steps = 1000000, 
                  compute_period: int = -1, 
                  start_steps: int = 10000, 
                  wrapper: gym.ObservationWrapper = None, 
+                 render_mode: str = "human", 
+                 recording: bool = False, 
                  env_kwargs: Dict = dict(), 
                  **memory_kwargs
                  ):
@@ -47,18 +53,36 @@ class Agent(object):
         
         Args:
             env_name (str): Name of the environment that agent lives in. 
+            seed (int, optional): Overall seed for learning
+            num_threads (int, optional): Number of threads used for intraop parallelism on CPU
             device (str, optional): Device in which algorithm works on (cpu, cuda, etc.)
+            max_train_steps (int, optional): Maximum number steps for training
             compute_period (int): How frequenty derived fields are computed. (-1 for off-policy algos)
             start_steps (int): Number of time-steps to act on environment before learning starts. 
             wrapper (gym.ObservationWrapper, optional): Environment wrapper. 
+            render_mode (str): Render flag during learning. 
             env_kwargs (Dict, optional): Environment parameters to use during `gym.make` call.  
             **memory_kwargs: Other arguments for episode memory such like environment, size etc. 
         """
+        self._seed = seed if seed != -1 else random.randint(1, 42)
+        self._num_threads = num_threads
         self._device = device
+        self._max_train_steps = max_train_steps
         self._start_steps = start_steps
         self._total_grad_steps = 0 # increment it as you learn from a single batch
+        self._recording = recording
+        # env
         self._env_name = env_name
-        self._env = gym.make(env_name, render_mode="human", **env_kwargs)
+        self._env = gym.make(env_name, render_mode=render_mode, **env_kwargs)
+        self._env.reset(seed=self._seed)
+        self._env.action_space.seed(self._seed)
+        self._env.observation_space.seed(self._seed)
+        # test env
+        # self._env_test = gym.make(env_name, render_mode=render_mode, **env_kwargs)
+        # self._env_test.reset(seed=42+self._seed)
+        # self._env_test.action_space.seed(42+self._seed)
+        # self._env_test.observation_space.seed(42+self._seed)
+        # 
         if wrapper is not None:
             self._env = wrapper(self._env) # if there is a wrapper.
         self._episode_max_time = self._env._max_episode_steps # environment time limit
@@ -66,7 +90,16 @@ class Agent(object):
         self._compute_period = compute_period
         self._total_env_interactions = 0
         self._episode_score = None
+        self._episode_discounted_score = None
+        self._episode_value_estimate = None
+        self._episode_value_error = None
         self._logger = None
+        if self._seed != -1:
+            random.seed(self._seed)
+            np.random.seed(self._seed)
+            th.manual_seed(self._seed)
+        if self._num_threads != -1:
+            th.set_num_threads(self._num_threads)
         self.memory = EpisodeMemory(device=self._device, 
                                     extra_fields=self.extra_fields, 
                                     derived_fields=self.derived_fields, 
@@ -122,16 +155,30 @@ class Agent(object):
             "action_space": self._env.action_space, 
         }
     
+    @property
+    def gamma(self):
+        if hasattr(self, "_gamma"):
+            return self._gamma
+        else:
+            return 1.0
+        
     def time_noncomputed_to_global(self, t):
         return self._total_env_interactions + t + 1 - self.memory._not_computed
 
     def _terminate_episode(self):
         self._observation, _ = self._env.reset()
         self.reset()
-        self._last_episode_score = self._episode_score
+        #self._last_episode_score = self._episode_score
+        #self._last_episode_discounted_score = self._episode_discounted_score
+        #self._last_episode_value_estimate = self._episode_value_estimate
+        #self._last_episode_value_error = self._episode_value_error
         self._episode_score = 0
+        self._episode_discounted_score = 0
+        self._episode_value_estimate = 0
+        self._episode_value_error = 0
         self._episode_time = 0
-        self._clear_record()
+        if self._recording:
+            self._clear_record()
 
     def _clear_record(self):
         """The agent saves state-action history, this function clears the records.
@@ -171,6 +218,18 @@ class Agent(object):
         """
         raise NotImplementedError
 
+    @th.no_grad()
+    def value(self, obs: np.ndarray):
+        """Estimate value of the policy given the observation. 
+        
+        Args:
+            obs (torch.tensor): Observation to take action according to.
+        
+        Raises:
+            NotImplementedError: This function must be overriden. 
+        """
+        raise NotImplementedError
+    
     def reset(self): 
         """Reset the agent. 
         
@@ -261,25 +320,23 @@ class Agent(object):
         l, h = self._env.action_space.low, self._env.action_space.high
         return (h+l)/2 + (h-l)/2 * action
     
-    def one_step_rollout(self, record=False):
+    def train_step_rollout(self):
         """Rollout in the environment with self and save transitions to memory.
 
-        Args:
-            record (bool, optional): Recording history flag. Defaults to False.
-
-        Returns:
-            float: Last episode score
         """
         action, extra = self.step(self._observation)
         if action is None: # it means self says randomly act.
             action = np.tanh(np.random.randn(*self._env.action_space.shape)) # random action between (-1, 1)
+        if self._episode_time == 0:
+            self._episode_value_estimate = self.value(self._observation)
         next_observation, reward, done, truncated, _ = self._env.step(self._adjust_action(action))
         is_episode_end = done or truncated
-        if record:
+        if self._recording:
             self._record(next_observation, action, reward, done, self._episode_time)
+        self._episode_score += reward
+        self._episode_discounted_score += pow(self.gamma, self._episode_time) * reward
         self._total_env_interactions += 1
         self._episode_time += 1
-        self._episode_score += reward
         self.memory._insert_transition(
             np.float32(self._observation), 
             np.float32(action), 
@@ -289,32 +346,33 @@ class Agent(object):
             truncated, 
             *extra
         )
-        # compute_period=-1 for off-policy algos. compute on episode end
-        # compute_period>0 for on-policy algos, compute when the time is ok
+        # compute_period = -1 for off-policy algos. compute on episode end
+        # compute_period > 0 for on-policy algos, compute when the time is ok
         # compute_flag = (self._compute_period==-1 and is_episode_end) or (self._total_env_interactions % self._compute_period == 0)
         compute_flag = is_episode_end if self._compute_period==-1 else (self._total_env_interactions % self._compute_period == 0)
         if compute_flag:
             self.memory._compute(self) 
         if is_episode_end: # end of the episode
+            self._episode_value_error = self._episode_value_estimate - self._episode_discounted_score
             self.log("episode_score", self._episode_score)
+            self.log("episode_discounted_score", self._episode_discounted_score)
+            self.log("episode_value_estimate", self._episode_value_estimate)
+            self.log("episode_value_error", self._episode_value_error)
             print('\rTime step {}\tScore: {:.2f}'.format(self._total_env_interactions, self._episode_score), end="")
             self._terminate_episode()
         else:
             self._observation = next_observation
-        return self._last_episode_score 
     
-    def train(self, max_steps: int = int(5e6), 
-            test_interval: int = None, 
+    def train(self, test_interval: int = None, 
         ):
         """Main train loop.
         
         Args:
-            max_steps (int, optional): Maximum number steps for training
             test_inverval(int, optional): How frequently test episodes are conducted. 
         """
         self._terminate_episode() # initial call for env reset.
-        for i in range(max_steps): 
-            self.one_step_rollout(self) # step inside episode memory
+        for i in range(self._max_train_steps): 
+            self.train_step_rollout() # step inside episode memory
             self.log_grad_step("total_env_interactions", self._total_env_interactions)
             if i > self._start_steps:
                 self.learn_on_step() # learn here.
@@ -334,8 +392,13 @@ class Agent(object):
         parser = ArgumentParser(parents=[parent_parser], add_help=False)
         parser.add_argument("--env_name", type=str, default="HalfCheetah-v4")
         parser.add_argument("--buffer_capacity", type=int, default=1000000)
+        parser.add_argument("--seed", type=int, default=-1)
+        parser.add_argument("--num_threads", type=int, default=-1)
+        parser.add_argument("--max_train_steps", type=int, default=1000000)
         parser.add_argument("--start_steps", type=int, default=10000)
         parser.add_argument("--device", type=str, default="cuda")
         parser.add_argument("--compute_period", type=int, default=-1)
+        parser.add_argument("--render_mode", type=str, default="human")
+        parser.add_argument("--recording", action="store_true", default=False)
         #parser.add_argument("--env_kwargs", type=json.loads())
         return parser

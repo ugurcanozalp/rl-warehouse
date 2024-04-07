@@ -71,38 +71,49 @@ class SAC(Agent):
     
     @property
     def extra_fields(self):
-        """On policy estimated log_prob and value is necessary for value bias estimation
+        """SAC algo do not need extra fields
         """
-        return ("log_prob", "value")
+        return ()
 
     @property
     def derived_fields(self):
         """There is no derived field for SAC algorithm.
         """
         return ()
-    
-    def forward(self, observation: th.Tensor):
+
+    def step_torch(self, observation: th.Tensor):
         distr = self._pi(observation)
         action = distr.rsample()
-        log_prob = distr.log_prob(action)
-        if self._pi.independent_actions: 
-            log_prob = log_prob.sum(dim=-1)
-        value = th.mean(self._q1(observation, action), self._q2(observation, action)).squeeze(-1) - self._alpha * log_prob
-        return action, (log_prob, value)
-    
+        return action, ()
+
     @th.no_grad()
     def step(self, observation: np.ndarray):
         if self._total_env_interactions < self._start_steps:
             action = None
-            log_prob = 0
-            value = 0
         else:
             observation_ = th.from_numpy(observation).unsqueeze(0).float().to(self.device)
-            action_, (log_prob_, value_) = self.forward(observation_)
+            action_, _ = self.step_torch(observation_)
             action = action_.squeeze(0).cpu().numpy()
-            log_prob = log_prob_.squeeze(0).cpu().numpy()
-            value = value_.squeeze(0).cpu().numpy()
-        return action, (log_prob, value)
+        return action, ()
+
+    def value_torch(self, observation: th.Tensor):
+        distr = self._pi(observation)
+        action_cloud = distr.rsample((10, ))
+        entropy = - distr.log_prob(action_cloud).mean(dim=0) # entropy by sampling 
+        if self._pi.independent_actions: 
+            entropy = entropy.sum(dim=-1)
+        observation_cloud = th.stack(10*[observation], dim=0)
+        q1val = self._q1(observation_cloud, action_cloud).mean(dim=0)
+        q2val = self._q2(observation_cloud, action_cloud).mean(dim=0)
+        value = 0.5*(q1val + q2val).squeeze(-1) + self._alpha * entropy
+        return value
+    
+    @th.no_grad()
+    def value(self, observation: np.ndarray):
+        observation_ = th.from_numpy(observation).unsqueeze(0).float().to(self.device)
+        value_ = self.value_torch(observation_)
+        value = value_.squeeze(0).cpu().numpy()
+        return value
 
     def reset(self):
         pass
@@ -119,7 +130,7 @@ class SAC(Agent):
         # train critics
         for _ in range(self._batch_per_step):
             self._total_grad_steps += 1
-            observation, action, reward, next_observation, done, truncated, _, _ = self.memory.sample(self._batch_size)
+            observation, action, reward, next_observation, done, truncated = self.memory.sample(self._batch_size)
             with th.no_grad():
                 next_action_distr = self._pi(next_observation)
                 next_action = next_action_distr.sample()
@@ -137,14 +148,14 @@ class SAC(Agent):
             qvalue2_est = self._q2(observation, action)
             qvalue2_loss = 0.5*th.nn.functional.mse_loss(qvalue2_est, qvalue)
             qvalue_loss = qvalue1_loss + qvalue2_loss
-            avg_q_var = 0.5*(qvalue1_est - qvalue2_est).square().mean()
+            avg_q_std = 0.5*(qvalue1_est - qvalue2_est).square().mean().sqrt()
             qvalue_loss.backward()
             self._q_optim.step()
             self._soft_update(self._q1, self._q1_target)
             self._soft_update(self._q2, self._q2_target)
             self.log_grad_step("q1_loss", qvalue1_loss)
             self.log_grad_step("q2_loss", qvalue2_loss)
-            self.log_grad_step("avg_q_var", avg_q_var)
+            self.log_grad_step("q_std_avg", avg_q_std)
             # train policy one time
             self._pi_optim.zero_grad()
             action_distr = self._pi(observation)
@@ -180,27 +191,7 @@ class SAC(Agent):
         next_observation, 
         done, 
         truncated, 
-        log_prob, 
-        value
     ):
-        not_done = np.logical_not(done)
-        cum_return = np.zeros_like(reward)
-        for t in reversed(range(self.memory._not_computed)):
-            # t_global = self._total_env_interactions + t+1 - self.memory._not_computed
-            t_global = self.time_noncomputed_to_global(t)
-            if t == self.memory._not_computed-1: # first time for calculation
-                _, (_, last_value) = self.step(next_observation[-1])
-                cum_return_next = not_done[-1] * last_value  
-            else:
-                cum_return_next = cum_return[t+1] 
-            if truncated[t]:
-                cum_return[t] = value[t]
-            else:
-                cum_return[t] = reward[t] - self._alpha * log_prob[t] + not_done[t] * self._gamma * cum_return_next
-            if t==0: # if it is first step of rollout
-                self.log("cum_return", cum_return[t], t_global)
-                self.log("value_estimate", value[t], t_global)
-                self.log("return_error", value[t]-cum_return[t], t_global)
         return ()
     
     @staticmethod

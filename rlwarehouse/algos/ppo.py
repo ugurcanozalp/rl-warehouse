@@ -83,7 +83,7 @@ class PPO(Agent):
         """
         return ("cum_return", "gae")
     
-    def forward(self, observation: th.Tensor):
+    def step_torch(self, observation: th.Tensor):
         distr = self._pi(observation)
         action = distr.rsample()
         log_prob = distr.log_prob(action)
@@ -93,14 +93,24 @@ class PPO(Agent):
         return action, (log_prob, value)
 
     @th.no_grad()
-    def step(self, observation: np.ndarray):
+    def step(self, observation: np.ndarray, warmup = False, exploit = False):
         observation_ = th.from_numpy(observation).unsqueeze(0).float().to(self.device)
-        action_, (log_prob_, value_) = self.forward(observation_)
+        action_, (log_prob_, value_) = self.step_torch(observation_)
         action = action_.squeeze(0).cpu().numpy()
         log_prob = log_prob_.squeeze(0).cpu().numpy()
         value = value_.squeeze(0).cpu().numpy()
         return action, (log_prob, value)
 
+    def value_torch(self, observation: th.Tensor):
+        return self._v(observation)
+    
+    @th.no_grad()
+    def value(self, observation: np.ndarray):
+        observation_ = th.from_numpy(observation).unsqueeze(0).float().to(self.device)
+        value_ = self.value_torch(observation_)
+        value = value_.squeeze(0).cpu().numpy()
+        return value
+            
     def reset(self):
         pass
 
@@ -182,9 +192,9 @@ class PPO(Agent):
                 cum_return[t] = reward[t] + not_done[t] * self._gamma * cum_return_next
             delta = reward[t] + not_done[t] * self._gamma * value_next - value[t] # one step td error
             gae[t] = delta + not_done[t] * self._gamma * self._lambda * gae_next
-            if t!=0 and (done[t-1] or truncated[t-1]): # if it is first step of rollout
-                self.log("cum_return", cum_return[t], t_global)
-                self.log("return_error", value[t]-cum_return[t], t_global)
+            #if t!=0 and (done[t-1] or truncated[t-1]): # if it is first step of rollout
+            #    self.log("cum_return", cum_return[t], t_global)
+            #    self.log("return_error", value[t]-cum_return[t], t_global)
         return cum_return, gae
 
     @staticmethod

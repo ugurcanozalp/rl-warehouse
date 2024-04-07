@@ -130,4 +130,5 @@ dmypy.json
 
 # training results added to runs folder
 runs/*
+runs*/*
 
