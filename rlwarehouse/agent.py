@@ -43,6 +43,8 @@ class Agent(object):
                  max_train_steps = 1000000, 
                  compute_period: int = -1, 
                  start_steps: int = 10000, 
+                 num_eval_episodes: int = 10, 
+                 eval_interval: int = 10000, 
                  wrapper: gym.ObservationWrapper = None, 
                  render_mode: str = "human", 
                  recording: bool = False, 
@@ -59,6 +61,8 @@ class Agent(object):
             max_train_steps (int, optional): Maximum number steps for training
             compute_period (int): How frequenty derived fields are computed. (-1 for off-policy algos)
             start_steps (int): Number of time-steps to act on environment before learning starts. 
+            num_eval_episodes (int): Number of episodes required to evaluate agent. 
+            eval_interval (int): Interval of training steps required to perform evaluation. 
             wrapper (gym.ObservationWrapper, optional): Environment wrapper. 
             render_mode (str): Render flag during learning. 
             env_kwargs (Dict, optional): Environment parameters to use during `gym.make` call.  
@@ -69,6 +73,8 @@ class Agent(object):
         self._device = device
         self._max_train_steps = max_train_steps
         self._start_steps = start_steps
+        self._num_eval_episodes = num_eval_episodes
+        self._eval_interval = eval_interval
         self._total_grad_steps = 0 # increment it as you learn from a single batch
         self._recording = recording
         # env
@@ -77,11 +83,11 @@ class Agent(object):
         self._env.reset(seed=self._seed)
         self._env.action_space.seed(self._seed)
         self._env.observation_space.seed(self._seed)
-        # test env
-        # self._env_test = gym.make(env_name, render_mode=render_mode, **env_kwargs)
-        # self._env_test.reset(seed=42+self._seed)
-        # self._env_test.action_space.seed(42+self._seed)
-        # self._env_test.observation_space.seed(42+self._seed)
+        # eval env
+        self._env_eval = gym.make(env_name, render_mode=render_mode, **env_kwargs)
+        self._env_eval.reset(seed=42+self._seed)
+        self._env_eval.action_space.seed(42+self._seed)
+        self._env_eval.observation_space.seed(42+self._seed)
         # 
         if wrapper is not None:
             self._env = wrapper(self._env) # if there is a wrapper.
@@ -168,10 +174,6 @@ class Agent(object):
     def _terminate_episode(self):
         self._observation, _ = self._env.reset()
         self.reset()
-        #self._last_episode_score = self._episode_score
-        #self._last_episode_discounted_score = self._episode_discounted_score
-        #self._last_episode_value_estimate = self._episode_value_estimate
-        #self._last_episode_value_error = self._episode_value_error
         self._episode_score = 0
         self._episode_discounted_score = 0
         self._episode_value_estimate = 0
@@ -243,7 +245,7 @@ class Agent(object):
         """
         pass
 
-    def test_mode(self):
+    def eval_mode(self):
         """Override this function if you need to do something before training.
         """
         pass
@@ -363,20 +365,58 @@ class Agent(object):
         else:
             self._observation = next_observation
     
-    def train(self, test_interval: int = None, 
-        ):
+    def train(self):
         """Main train loop.
         
         Args:
             test_inverval(int, optional): How frequently test episodes are conducted. 
         """
+        self.train_mode()
         self._terminate_episode() # initial call for env reset.
         for i in range(self._max_train_steps): 
             self.train_step_rollout() # step inside episode memory
             self.log_grad_step("total_env_interactions", self._total_env_interactions)
             if i > self._start_steps:
                 self.learn_on_step() # learn here.
+            if i % self._eval_interval == 0 and i != 0:
+                self.eval()
+                self.train_mode() # go back to train mode
     
+    def eval(self): 
+        """Evaluate the agent for fixed number of episodes
+        """
+        self.eval_mode()
+        value_estimate = np.zeros(self._num_eval_episodes, dtype=np.float32)
+        value_error = np.zeros(self._num_eval_episodes, dtype=np.float32)
+        score = np.zeros(self._num_eval_episodes, dtype=np.float32)
+        discounted_score = np.zeros(self._num_eval_episodes, dtype=np.float32)
+        time = np.zeros(self._num_eval_episodes, dtype=np.float32)
+        for e in range(self._num_eval_episodes):
+            score[e] = 0
+            discounted_score[e] = 0
+            time[e] = 0
+            observation, _ = self._env_eval.reset()
+            value_estimate[e] = self.value(observation)
+            is_episode_end = False
+            while not is_episode_end:
+                action, _ = self.step(observation, exploit=True)
+                next_observation, reward, done, truncated, _ = self._env_eval.step(self._adjust_action(action))
+                is_episode_end = done or truncated
+                if self._recording:
+                    self._record(next_observation, action, reward, done, self._episode_time)
+                score[e] += reward
+                discounted_score[e] += pow(self.gamma, time[e]) * reward
+                time[e] += 1
+                # update observation
+                observation = next_observation
+            # end of the episode
+            value_error[e] = value_estimate[e] - discounted_score[e]
+        # logging 
+        self.log("eval_score", score.mean())
+        # self.log("eval_discounted_score", discounted_score.mean())
+        # self.log("eval_value_estimate", value_estimate.mean())
+        self.log("eval_value_error", value_error.mean())
+
     def experiment(self):
         current_time = datetime.now().strftime("%b%d_%H-%M-%S")
         logdir = os.path.join("runs", self._env_name + "_" + current_time)
@@ -396,6 +436,8 @@ class Agent(object):
         parser.add_argument("--num_threads", type=int, default=-1)
         parser.add_argument("--max_train_steps", type=int, default=1000000)
         parser.add_argument("--start_steps", type=int, default=10000)
+        parser.add_argument("--num_eval_episodes", type=int, default=10)
+        parser.add_argument("--eval_interval", type=int, default=10000)
         parser.add_argument("--device", type=str, default="cuda")
         parser.add_argument("--compute_period", type=int, default=-1)
         parser.add_argument("--render_mode", type=str, default="human")

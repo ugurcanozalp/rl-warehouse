@@ -83,9 +83,12 @@ class PPO(Agent):
         """
         return ("cum_return", "gae")
     
-    def step_torch(self, observation: th.Tensor):
+    def step_torch(self, observation: th.Tensor, exploit: bool = False):
         distr = self._pi(observation)
-        action = distr.rsample()
+        if exploit:
+            action = distr.rsample((10, )).mean(dim=0) # averaged action
+        else:
+            action = distr.rsample()
         log_prob = distr.log_prob(action)
         if self._pi.independent_actions: 
             log_prob = log_prob.sum(dim=-1)
@@ -93,9 +96,9 @@ class PPO(Agent):
         return action, (log_prob, value)
 
     @th.no_grad()
-    def step(self, observation: np.ndarray, warmup = False, exploit = False):
+    def step(self, observation: np.ndarray, exploit: bool = False):
         observation_ = th.from_numpy(observation).unsqueeze(0).float().to(self.device)
-        action_, (log_prob_, value_) = self.step_torch(observation_)
+        action_, (log_prob_, value_) = self.step_torch(observation_, exploit=exploit)
         action = action_.squeeze(0).cpu().numpy()
         log_prob = log_prob_.squeeze(0).cpu().numpy()
         value = value_.squeeze(0).cpu().numpy()
@@ -161,6 +164,14 @@ class PPO(Agent):
         """Initialize Adam optimizer."""
         self._pi_optim = AdamW(self._pi.parameters(), lr=pi_lr)
         self._v_optim = AdamW(self._v.parameters(), lr=v_lr)
+
+    def train_mode(self):
+        self._v.train()
+        self._pi.train()
+
+    def eval_mode(self):
+        self._v.eval()
+        self._pi.eval()
 
     def compute_function(self,
         observation, 

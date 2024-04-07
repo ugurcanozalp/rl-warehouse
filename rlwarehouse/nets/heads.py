@@ -28,7 +28,7 @@ class SquashedGaussianHead(nn.Module):
         # bt means before tanh
         mean_bt = x[...,:self._n] 
         logstd_bt = x[...,self._n:] 
-        std_bt = th.nn.functional.softplus(logstd_bt) 
+        std_bt = th.nn.functional.softplus(logstd_bt-0.5) # this shit is stable 
         dist_bt = Normal(mean_bt, std_bt, validate_args=True)
         transform = StableTanhTransform(cache_size=1)
         dist = TransformedDistribution(dist_bt, [transform], validate_args=True)

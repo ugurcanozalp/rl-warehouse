@@ -81,18 +81,21 @@ class SAC(Agent):
         """
         return ()
 
-    def step_torch(self, observation: th.Tensor):
+    def step_torch(self, observation: th.Tensor, exploit: bool = False):
         distr = self._pi(observation)
-        action = distr.rsample()
+        if exploit:
+            action = distr.rsample((10, )).mean(dim=0) # averaged action
+        else:
+            action = distr.rsample()
         return action, ()
 
     @th.no_grad()
-    def step(self, observation: np.ndarray):
+    def step(self, observation: np.ndarray, exploit: bool = False):
         if self._total_env_interactions < self._start_steps:
             action = None
         else:
             observation_ = th.from_numpy(observation).unsqueeze(0).float().to(self.device)
-            action_, _ = self.step_torch(observation_)
+            action_, _ = self.step_torch(observation_, exploit=exploit)
             action = action_.squeeze(0).cpu().numpy()
         return action, ()
 
@@ -106,6 +109,8 @@ class SAC(Agent):
         q1val = self._q1(observation_cloud, action_cloud).mean(dim=0)
         q2val = self._q2(observation_cloud, action_cloud).mean(dim=0)
         value = 0.5*(q1val + q2val).squeeze(-1) + self._alpha * entropy
+        if self._autotune: # correct value 
+            value = value - 1/(1-self._gamma) * self._alpha * self._target_entropy 
         return value
     
     @th.no_grad()
@@ -183,7 +188,17 @@ class SAC(Agent):
             [{'params': self._q1.parameters()}, {'params': self._q2.parameters()}], 
             lr=q_lr
         )
-    
+
+    def train_mode(self):
+        self._q1.train()
+        self._q2.train()
+        self._pi.train()
+
+    def eval_mode(self):
+        self._q1.eval()
+        self._q2.eval()
+        self._pi.eval()
+
     def compute_function(self,
         observation, 
         action, 

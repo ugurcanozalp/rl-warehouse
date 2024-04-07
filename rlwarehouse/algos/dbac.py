@@ -71,18 +71,21 @@ class DBAC(Agent):
         """
         return ()
     
-    def step_torch(self, observation: th.Tensor):
+    def step_torch(self, observation: th.Tensor, exploit: bool = False):
         distr = self._pi(observation)
-        action = distr.rsample()
+        if exploit:
+            action = distr.rsample((10, )).mean(dim=0) # averaged action
+        else:
+            action = distr.rsample()
         return action, ()
 
     @th.no_grad()
-    def step(self, observation: np.ndarray):
+    def step(self, observation: np.ndarray, exploit: bool = False):
         if self._total_env_interactions < self._start_steps:
             action = None
         else:
             observation_ = th.from_numpy(observation).unsqueeze(0).float().to(self.device)
-            action_, _ = self.step_torch(observation_)
+            action_, _ = self.step_torch(observation_, exploit=exploit)
             action = action_.squeeze(0).cpu().numpy()
         return action, ()
 
@@ -95,6 +98,8 @@ class DBAC(Agent):
         observation_cloud = th.stack(10*[observation], dim=0)
         q_dist = self._q(observation_cloud, action_cloud)
         value = q_dist.mean.mean(dim=0).squeeze(-1) + self._alpha * entropy
+        if self._autotune: # correct value 
+            value = value - 1/(1-self._gamma) * self._alpha * self._target_entropy 
         return value
     
     @th.no_grad()
@@ -185,6 +190,14 @@ class DBAC(Agent):
         """Initialize Adam optimizer."""
         self._pi_optim = AdamW(self._pi.parameters(), lr=pi_lr)
         self._q_optim = AdamW(self._q.parameters(), lr=self._q_lr)
+
+    def train_mode(self):
+        self._q.train()
+        self._pi.train()
+
+    def eval_mode(self):
+        self._q.eval()
+        self._pi.eval()
 
     def compute_function(self,
         observation, 
