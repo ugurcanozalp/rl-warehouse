@@ -7,9 +7,9 @@ from .heads import *
 class ContinuousMLPStochasticValue(nn.Module):
     def __init__(self, observation_shape, dropout=0, **kwargs):
         super(ContinuousMLPStochasticValue, self).__init__()
-        self.fc1 = nn.Sequential(nn.Linear(observation_shape[0], 256), nn.Dropout(dropout), nn.LayerNorm(256), nn.ReLU())
-        self.fc2 = nn.Sequential(nn.Linear(256, 256), nn.Dropout(dropout), nn.LayerNorm(256), nn.ReLU())
-        self.v_fc = nn.Linear(256, 2)
+        self.fc1 = nn.Sequential(nn.Linear(observation_shape[0], 384), nn.Dropout(dropout), nn.LayerNorm(384), nn.ReLU())
+        self.fc2 = nn.Sequential(nn.Linear(384, 384), nn.Dropout(dropout), nn.LayerNorm(384), nn.ReLU())
+        self.v_fc = nn.Linear(384, 2)
         self.v_head = GaussianHead(1)
 
     def forward(self, observation):

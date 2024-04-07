@@ -10,8 +10,8 @@ from torch.optim import Adam, AdamW, Optimizer
 from ..agent import Agent
 from ..nets import policy_map, probabilistic_qvalue_map
 
-# optbeta        ->        Ant = 1.0, Hopper = 0.5, Walker2d = 0.25, Humanoid = 0.75, HalfCheetah = 0.25
-# target entropy ->        Ant = -4 , Hopper = -1 , Walker2d = -3  , Humanoid = -2  , HalfCheetah = -6
+# optbeta        ->        Ant = 1.0, Hopper = 0.75, Walker2d = 0.50, Humanoid = 0.75, HalfCheetah = 0.25
+# target entropy ->        Ant = -4 , Hopper = -1  , Walker2d = -3  , Humanoid = -2  , HalfCheetah = -3
 
 class OAPC(Agent):
     
@@ -47,7 +47,6 @@ class OAPC(Agent):
         self._batch_size = batch_size 
         self._q_lr = q_lr
         self._pi_lr = pi_lr
-        # self._max_grad_norm = max_grad_norm
         # networks
         self._pi = policy_map[pi_net](**self.env_info, dropout=self._dropout).to(self._device)
         self._q = probabilistic_qvalue_map[q_net](dropout=self._dropout, **self.env_info).to(self._device)
@@ -118,10 +117,8 @@ class OAPC(Agent):
                 next_entropy = - next_action_distr.log_prob(next_action)
                 if self._pi.independent_actions: 
                     next_entropy = next_entropy.sum(dim=-1, keepdim=True)  
-                # take min of two, like sac
                 next_q_distr = self._q_target(next_observation, next_action)
                 next_value_target = (next_q_distr.mean - self._beta * next_q_distr.stddev + self._alpha * next_entropy) * done.logical_not().unsqueeze(-1)
-                # next_value_target = (next_q_distr.mean - 0.5*self._beta * next_q_distr.variance + self._alpha * next_entropy) * done.logical_not().unsqueeze(-1) 
                 q_target_sample = reward.unsqueeze(-1) + self._gamma * next_value_target 
             # critic learning behavioral policy 
             self._q_optim.zero_grad()
@@ -144,8 +141,7 @@ class OAPC(Agent):
             if self._pi.independent_actions: 
                 pi_entropy = pi_entropy.sum(dim=-1, keepdim=True)
             q_onpolicy_distr = self._q(observation, action_onpolicy)
-            q_onpolicy = q_onpolicy_distr.mean + self._beta * q_onpolicy_distr.stddev
-            # q_onpolicy = q_onpolicy_distr.mean - 0.5*self._beta * q_onpolicy_distr.variance
+            q_onpolicy = q_onpolicy_distr.mean - self._beta * q_onpolicy_distr.stddev
             pi_obj = - (q_onpolicy + self._alpha * pi_entropy)
             pi_loss = pi_obj.mean()
             self.log_grad_step("pi_loss", pi_loss)
