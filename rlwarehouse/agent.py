@@ -1,4 +1,4 @@
-"""Generic RL Agent definition
+"""Generic Online RL Agent definition
 """
 
 from argparse import ArgumentParser
@@ -13,6 +13,8 @@ import gymnasium as gym
 import torch as th
 from torch.utils.tensorboard import SummaryWriter
 from tbparse import SummaryReader
+import matplotlib.pyplot as plt 
+from matplotlib import colormaps
 
 from .episode_memory import EpisodeMemory
 
@@ -44,11 +46,11 @@ class Agent(object):
                  max_train_steps = 1000000, 
                  compute_period: int = -1, 
                  start_steps: int = 10000, 
-                 num_eval_episodes: int = 10, 
                  eval_interval: int = 10000, 
                  wrapper: gym.ObservationWrapper = None, 
                  render_mode: str = "human", 
                  recording: bool = False, 
+                 logging: bool = False, 
                  env_kwargs: Dict = dict(), 
                  **memory_kwargs
                  ):
@@ -62,7 +64,6 @@ class Agent(object):
             max_train_steps (int, optional): Maximum number steps for training
             compute_period (int): How frequenty derived fields are computed. (-1 for off-policy algos)
             start_steps (int): Number of time-steps to act on environment before learning starts. 
-            num_eval_episodes (int): Number of episodes required to evaluate agent. 
             eval_interval (int): Interval of training steps required to perform evaluation. 
             wrapper (gym.ObservationWrapper, optional): Environment wrapper. 
             render_mode (str): Render flag during learning. 
@@ -74,10 +75,10 @@ class Agent(object):
         self._device = device
         self._max_train_steps = max_train_steps
         self._start_steps = start_steps
-        self._num_eval_episodes = num_eval_episodes
         self._eval_interval = eval_interval
         self._total_grad_steps = 0 # increment it as you learn from a single batch
         self._recording = recording
+        self._logging = logging
         # env
         self._env_name = env_name
         self._env = gym.make(env_name, render_mode=render_mode, **env_kwargs)
@@ -111,6 +112,10 @@ class Agent(object):
                                     extra_fields=self.extra_fields, 
                                     derived_fields=self.derived_fields, 
                                     **memory_kwargs)
+    @property
+    def algo_name(self):
+        "Retrieve algorithm name"
+        return self.__class__.__name__
 
     @property   
     def device(self) -> str:
@@ -278,16 +283,18 @@ class Agent(object):
         """
         return ()
 
-    def log(self, log_name: str, log_value: float, step: int = None):
+    def log(self, log_name: str, log_value: float, step: int = None, bypass: bool = False):
         """Log a parameter during training
 
         Args:
             log_name (str): Name of the logged parameter
             log_value (float): Value of the logged parameter
             step (int): Step index
+            bypass (bool): Bypass no logging flag (Always log)
         """
-        step = self._total_env_interactions if step is None else step
-        self._logger.add_scalar(log_name, log_value, step)
+        if self._logging or bypass:
+            step = self._total_env_interactions if step is None else step
+            self._logger.add_scalar(log_name, log_value, step)
 
     def log_histogram(self, log_name: str, log_value: np.ndarray, step: int = None):
         """Log a vector during training
@@ -297,9 +304,11 @@ class Agent(object):
             log_value (np.ndarray): Value of the logged parameter
             step (int): Step index
         """
-        step = self._total_env_interactions if step is None else step
-        self._logger.add_histogram(log_name, log_value, step)
+        if self._logging:
+            step = self._total_env_interactions if step is None else step
+            self._logger.add_histogram(log_name, log_value, step)
 
+    '''not used for now
     def log_run_hparams(self, dict: Dict[str, Union[bool, str, float, int]]):
         """Log a hyperparameters of the run
 
@@ -309,6 +318,7 @@ class Agent(object):
         text = " | hyperparam | value | \n | ----------- | ----------- | " + \
             "\n".join([f" {k} : {v:2.4f} " for k, v in dict.items()])
         self._logger.add_text("hyperparameters", text, 0)
+    '''
 
     def log_hparams(self, hparams: Dict[str, Union[bool, str, float, int]], 
             metrics: Dict[str, Union[bool, str, float, int]]):
@@ -320,7 +330,7 @@ class Agent(object):
         """
         self._logger.add_hparams(hparams, metrics, 0)
 
-    def log_text(self, description: str, text: str):
+    def log_text(self, description: str, text: str): 
         """Log a textual info
 
         Args:
@@ -400,45 +410,34 @@ class Agent(object):
         """Evaluate the agent for fixed number of episodes
         """
         self.eval_mode()
-        #print("inside eval..")
-        #print(self._q.training)
-        #print(self._pi.training)
-        value_estimate = np.zeros(self._num_eval_episodes, dtype=np.float32)
-        value_error = np.zeros(self._num_eval_episodes, dtype=np.float32)
-        score = np.zeros(self._num_eval_episodes, dtype=np.float32)
-        discounted_score = np.zeros(self._num_eval_episodes, dtype=np.float32)
-        time = np.zeros(self._num_eval_episodes, dtype=np.float32)
-        for e in range(self._num_eval_episodes):
-            score[e] = 0
-            discounted_score[e] = 0
-            time[e] = 0
-            observation, _ = self._env_eval.reset()
-            value_estimate[e] = self.value(observation)
-            is_episode_end = False
-            while not is_episode_end:
-                action, _ = self.step(observation, exploit=True)
-                next_observation, reward, done, truncated, _ = self._env_eval.step(self._adjust_action(action))
-                is_episode_end = done or truncated
-                if self._recording:
-                    self._record(next_observation, action, reward, done, self._episode_time)
-                score[e] += reward
-                discounted_score[e] += pow(self.gamma, time[e]) * reward
-                time[e] += 1
-                # update observation
-                observation = next_observation
-            # end of the episode
-            value_error[e] = value_estimate[e] - discounted_score[e]
+        score = 0
+        discounted_score = 0
+        time = 0
+        observation, _ = self._env_eval.reset()
+        value_estimate = self.value(observation)
+        is_episode_end = False
+        while not is_episode_end:
+            action, _ = self.step(observation, exploit=True)
+            if action is None: # it means self says randomly act.
+                action = np.tanh(np.random.randn(*self._env.action_space.shape)) # random action between (-1, 1)
+            next_observation, reward, done, truncated, _ = self._env_eval.step(self._adjust_action(action))
+            is_episode_end = done or truncated
+            if self._recording:
+                self._record(next_observation, action, reward, done, self._episode_time)
+            score += reward
+            discounted_score += pow(self.gamma, time) * reward
+            time += 1
+            # update observation
+            observation = next_observation
+        # end of the episode
+        value_error = value_estimate - discounted_score
         # logging 
-        self.log_histogram("eval_scores", score)
-        self.log("eval_score_mean", score.mean())
-        self.log("eval_score_std", score.std())
-        self.log_histogram("eval_value_errors", value_error)
-        self.log("eval_value_error_mean", value_error.mean())
-        self.log("eval_value_error_std", value_error.std())
+        self.log("eval_score", score, bypass=True)
+        self.log("eval_value_error", value_error, bypass=True)
 
     def experiment(self):
         current_time = datetime.now().strftime("%b%d_%H-%M-%S")
-        log_dir = os.path.join("runs", self._env_name + "_" + current_time)
+        log_dir = os.path.join("runs", self._env_name, self.algo_name, current_time)
         self._logger = SummaryWriter(log_dir=log_dir)
         # log hyperparameters
         self.log_hparams(self.hparams, {}) # log available variables..
@@ -446,14 +445,72 @@ class Agent(object):
         self.log_text("experiment_time", current_time)
         self.train() # and test sometimes..
         self.experiment_end()
-
+    
     @staticmethod
-    def parse_logs(self, log_dir: str):
-        # TODO: Implement it with SummaryReader
-        reader = SummaryReader(log_dir=log_dir, pivot=True)
-        scalars = reader.scalars
-        hparams = reader.hparams
-        return None
+    def parse_logs(run_dir: str) -> None:
+        """Parse results of the overall experiments
+
+        Args:
+            run_dir (str): Path where runs are stored. Subfolders are env names 
+            and inner folders are algo names.
+
+        Returns:
+            Dict: Returns results as a dictionary. 
+        """
+        env_names = os.listdir(run_dir)
+        env_results = {} # fill in it 
+        for env in env_names:
+            env_dir = os.path.join(run_dir, env)
+            algo_names = os.listdir(env_dir)
+            algo_results = {} # fill in it 
+            for algo in algo_names:
+                algo_dir = os.path.join(env_dir, algo)
+                reader = SummaryReader(log_path=algo_dir, pivot=True)
+                scalars, hparams = reader.scalars, reader.hparams
+                algo_results[algo] = {"scalars": scalars, "hparams": hparams}
+            env_results[env] = algo_results
+        return env_results
+    
+    @staticmethod
+    def summarize(env_results: Dict, save_path: str, ncolsrows: Tuple[int], colormap: str = "Set1", smooth_window: int = 5):
+        """Summarize everything about the results
+        """
+        COLORMAP = colormaps.get(colormap)
+        ncol, nrow = ncolsrows
+        fig = plt.figure(figsize=(3*ncol, 4*nrow))
+        assert ncol*nrow == len(env_results), "Number of environments do not match layout"
+        for i, (env, env_results) in enumerate(env_results.items()):
+            ax = fig.add_subplot(ncol, nrow, i+1)
+            ax.set_title(env)
+            for j, (algo, algo_results) in enumerate(env_results.items()):
+                mask = ~algo_results["scalars"]["eval_score"].isnull()
+                step = algo_results["scalars"]["step"][mask]
+                eval_score = np.stack(algo_results["scalars"]["eval_score"][mask].apply(np.array)) 
+                eval_score_mean = eval_score.mean(axis=1) # mean across trials
+                eval_score_var = eval_score.var(axis=1) # var across trials
+                eval_score_std = np.sqrt(eval_score_var)
+                # moving average filtering for better visual
+                eval_score_mean_ma = np.convolve(eval_score_mean, np.ones(smooth_window)/smooth_window, mode="same")
+                eval_score_var_ma = np.convolve(eval_score_var, np.ones(smooth_window)/smooth_window, mode="same")
+                eval_score_std_ma = np.sqrt(eval_score_var_ma)
+                ax.plot(step, eval_score_mean_ma, color=COLORMAP(j), alpha=1.0, label=algo)
+                ax.fill_between(step, 
+                    eval_score_mean_ma - eval_score_std_ma,
+                    eval_score_mean_ma + eval_score_std_ma,
+                    facecolor=COLORMAP(j), alpha=0.3)
+                auc_score = eval_score.mean()
+                max_score = eval_score.max()
+                last_score_mean = eval_score_mean[-1].mean()
+                last_score_std = eval_score_std[-1]
+            ax.set_ylabel("undiscounted return", fontsize=8)
+            ax.set_xlabel("# env interactions", fontsize=8)
+            if i == 0: # only for first plot
+                ax.legend()
+            ax.grid()
+        plt.tight_layout()
+        fig.savefig(os.path.join(save_path, "plot.png"))
+        fig.show()
+        # Agent.summarize(env_results, "runs", (2, 1), colormap="Set1", smooth_window=5)
 
     @staticmethod
     def add_model_specific_args(parent_parser):
@@ -464,11 +521,11 @@ class Agent(object):
         parser.add_argument("--num_threads", type=int, default=-1)
         parser.add_argument("--max_train_steps", type=int, default=1000000)
         parser.add_argument("--start_steps", type=int, default=10000)
-        parser.add_argument("--num_eval_episodes", type=int, default=10)
-        parser.add_argument("--eval_interval", type=int, default=10000)
+        parser.add_argument("--eval_interval", type=int, default=1000)
         parser.add_argument("--device", type=str, default="cuda")
         parser.add_argument("--compute_period", type=int, default=-1)
         parser.add_argument("--render_mode", type=str, default="human")
         parser.add_argument("--recording", action="store_true", default=False)
+        parser.add_argument("--logging", action="store_true", default=False)
         #parser.add_argument("--env_kwargs", type=json.loads())
         return parser
