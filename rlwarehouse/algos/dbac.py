@@ -10,7 +10,7 @@ from torch.optim import Adam, AdamW, Optimizer
 from ..agent import Agent
 from ..nets import policy_map, probabilistic_qvalue_map
 
-# optbeta        ->        Ant = 1.0, Hopper = 0.75, Walker2d = 0.50, Humanoid = 0.75, HalfCheetah = 0.25
+# optbeta        ->        Ant = 1.0, Hopper = 0.75, Walker2d = 0.50, Humanoid = 0.75, HalfCheetah = 0.5
 # target entropy ->        Ant = -4 , Hopper = -1  , Walker2d = -3  , Humanoid = -2  , HalfCheetah = -3
 
 class DBAC(Agent):
@@ -29,6 +29,7 @@ class DBAC(Agent):
         dropout: float = 0.01, 
         tau: float = 0.005, 
         batch_per_step: int = 1, 
+        policy_delay: int = 1, 
         pi_lr: float = 3e-4, 
         q_lr: float = 1e-3, 
         batch_size: int = 256, 
@@ -44,6 +45,7 @@ class DBAC(Agent):
         self._dropout = dropout
         self._tau = tau
         self._batch_per_step = batch_per_step
+        self._policy_delay = policy_delay
         self._batch_size = batch_size 
         self._q_lr = q_lr
         self._pi_lr = pi_lr
@@ -100,6 +102,8 @@ class DBAC(Agent):
         value = q_dist.mean.mean(dim=0).squeeze(-1) + self._alpha * entropy
         if self._autotune: # correct value 
             value = value - 1/(1-self._gamma) * self._alpha * self._target_entropy 
+        else:
+            value = value - 1/(1-self._gamma) * self._alpha * entropy # initial timestep entropy...
         return value
     
     @th.no_grad()
@@ -121,8 +125,7 @@ class DBAC(Agent):
             target_param.data.copy_(local_param.data)
 
     def learn_on_step(self):
-        # train critics
-        for _ in range(self._batch_per_step): 
+        for i in range(self._batch_per_step): 
             self._total_grad_steps += 1
             observation, action, reward, next_observation, done, truncated = self.memory.sample(self._batch_size)
             with th.no_grad():
@@ -141,33 +144,35 @@ class DBAC(Agent):
             q_crossentropy = - q_distr.log_prob(q_target_sample) # batch, 1
             q_obj = q_crossentropy
             q_loss = q_obj.mean()
-            self.log_grad_step("q_loss", q_loss)
-            self.log_grad_step("q_std_avg", q_distr.stddev.mean())
+            self.log("q_loss", q_loss)
+            self.log("q_avg", q_distr.mean.mean())
+            self.log("q_std_avg", q_distr.stddev.mean())
             q_loss.backward()
             self._q_optim.step()
             self._soft_update(self._q, self._q_target)
             # on-policy updates
-            self._pi_optim.zero_grad()
-            action_distr = self._pi(observation)
-            action_onpolicy = action_distr.rsample()
-            pi_entropy = - action_distr.log_prob(action_onpolicy)
-            if self._pi.independent_actions: 
-                pi_entropy = pi_entropy.sum(dim=-1, keepdim=True)
-            q_onpolicy_distr = self._q(observation, action_onpolicy)
-            q_onpolicy = q_onpolicy_distr.mean - self._beta * q_onpolicy_distr.stddev
-            pi_obj = - (q_onpolicy + self._alpha * pi_entropy)
-            pi_loss = pi_obj.mean()
-            self.log_grad_step("pi_loss", pi_loss)
-            self.log_grad_step("q_onpolicy_avg", q_onpolicy.mean())
-            self.log_grad_step("q_onpolicy_std_avg", q_onpolicy_distr.stddev.mean())
-            self.log_grad_step("pi_entropy_avg", pi_entropy.mean())
-            pi_loss.backward()
-            self._pi_optim.step()
-            # if autotune
-            if self._autotune:
-                pi_entropy_ = pi_entropy.mean().cpu().item()
-                self._alpha = self._alpha * math.exp(self._q_lr * self._alpha * ( self._target_entropy - pi_entropy_))
-                self.log_grad_step("alpha", self._alpha)
+            if (i+1) % self._policy_delay == 0:
+                self._pi_optim.zero_grad()
+                action_distr = self._pi(observation)
+                action_onpolicy = action_distr.rsample()
+                pi_entropy = - action_distr.log_prob(action_onpolicy)
+                if self._pi.independent_actions: 
+                    pi_entropy = pi_entropy.sum(dim=-1, keepdim=True)
+                q_onpolicy_distr = self._q(observation, action_onpolicy)
+                q_onpolicy = q_onpolicy_distr.mean - self._beta * q_onpolicy_distr.stddev
+                pi_obj = - (q_onpolicy + self._alpha * pi_entropy)
+                pi_loss = pi_obj.mean()
+                self.log("pi_loss", pi_loss)
+                self.log("pi_entropy_avg", pi_entropy.mean())
+                self.log("q_onpolicy_avg", q_onpolicy.mean())
+                self.log("q_std_onpolicy_avg", q_onpolicy_distr.stddev.mean())
+                pi_loss.backward()
+                self._pi_optim.step()
+                # if autotune
+                if self._autotune:
+                    pi_entropy_ = pi_entropy.mean().cpu().item()
+                    self._alpha = self._alpha * math.exp(self._q_lr * self._alpha * ( self._target_entropy - pi_entropy_))
+                    self.log("alpha", self._alpha)
 
     @property
     def hparams(self):
@@ -208,6 +213,9 @@ class DBAC(Agent):
         truncated, 
     ):
         return ()
+
+    def experiment_end(self): 
+        pass
     
     @staticmethod
     def add_model_specific_args(parent_parser):
@@ -224,6 +232,7 @@ class DBAC(Agent):
         parser.add_argument("--dropout", type=float, default=0.01)
         parser.add_argument("--tau", type=float, default=0.005)
         parser.add_argument("--batch_per_step", type=int, default=1)
+        parser.add_argument("--policy_delay", type=int, default=1)
         parser.add_argument("--target_update_interval", type=int, default=1)
         parser.add_argument("--pi_lr", type=float, default=3e-4)
         parser.add_argument("--q_lr", type=float, default=1e-3)

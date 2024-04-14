@@ -111,6 +111,8 @@ class SAC(Agent):
         value = 0.5*(q1val + q2val).squeeze(-1) + self._alpha * entropy
         if self._autotune: # correct value 
             value = value - 1/(1-self._gamma) * self._alpha * self._target_entropy 
+        else:
+            value = value - 1/(1-self._gamma) * self._alpha * entropy # initial timestep entropy...
         return value
     
     @th.no_grad()
@@ -132,8 +134,7 @@ class SAC(Agent):
             target_param.data.copy_(local_param.data)
             
     def learn_on_step(self):
-        # train critics
-        for _ in range(self._batch_per_step):
+        for i in range(self._batch_per_step):
             self._total_grad_steps += 1
             observation, action, reward, next_observation, done, truncated = self.memory.sample(self._batch_size)
             with th.no_grad():
@@ -153,14 +154,16 @@ class SAC(Agent):
             qvalue2_est = self._q2(observation, action)
             qvalue2_loss = 0.5*th.nn.functional.mse_loss(qvalue2_est, qvalue)
             qvalue_loss = qvalue1_loss + qvalue2_loss
-            avg_q_std = 0.5*(qvalue1_est - qvalue2_est).square().mean().sqrt()
+            q_std = 0.5*(qvalue1_est - qvalue2_est).abs()
             qvalue_loss.backward()
             self._q_optim.step()
             self._soft_update(self._q1, self._q1_target)
             self._soft_update(self._q2, self._q2_target)
-            self.log_grad_step("q1_loss", qvalue1_loss)
-            self.log_grad_step("q2_loss", qvalue2_loss)
-            self.log_grad_step("q_std_avg", avg_q_std)
+            self.log("q_loss", qvalue_loss)
+            self.log("q1_loss", qvalue1_loss)
+            self.log("q2_loss", qvalue2_loss)
+            self.log("q_avg", (qvalue1_est+qvalue2_est)/2)
+            self.log("q_std_avg", q_std.mean())
             # train policy one time
             self._pi_optim.zero_grad()
             action_distr = self._pi(observation)
@@ -168,17 +171,23 @@ class SAC(Agent):
             entropy = - action_distr.log_prob(action_imaginary)
             if self._pi.independent_actions: 
                 entropy = entropy.sum(dim=-1, keepdim=True)
-            q_imaginary = th.min(self._q1(observation, action_imaginary), self._q2(observation, action_imaginary))
-            pi_loss = -(q_imaginary + self._alpha * entropy).mean()
+            q1_onpolicy = self._q1(observation, action_imaginary)
+            q2_onpolicy = self._q2(observation, action_imaginary)
+            q_onpolicy = th.min(q1_onpolicy, q2_onpolicy)
+            q_std_onpolicy = 0.5*(q1_onpolicy - q2_onpolicy).abs()
+            q_mean_onpolicy = 0.5*(q1_onpolicy + q2_onpolicy)
+            pi_loss = -(q_onpolicy + self._alpha * entropy).mean()
             pi_loss.backward()
             self._pi_optim.step()
-            self.log_grad_step("pi_loss", pi_loss)
-            self.log_grad_step("entropy", entropy.mean())
+            self.log("pi_loss", pi_loss)
+            self.log("pi_entropy_avg", entropy.mean())
+            self.log("q_onpolicy_avg", q_mean_onpolicy.mean())
+            self.log("q_std_onpolicy_avg", q_std_onpolicy.stddev.mean())
             # if autotune
             if self._autotune:
                 entropy_ = entropy.mean().cpu().item()
                 self._alpha = self._alpha * math.exp(self._q_lr * ( self._target_entropy - entropy_))
-                self.log_grad_step("alpha", self._alpha)
+                self.log("alpha", self._alpha)
 
     def _construct_optimizers(self, pi_lr, q_lr):
         """Initialize Adam optimizer."""
@@ -208,7 +217,10 @@ class SAC(Agent):
         truncated, 
     ):
         return ()
-    
+
+    def experiment_end(self): 
+        pass
+
     @staticmethod
     def add_model_specific_args(parent_parser):
         parser = ArgumentParser(parents=[parent_parser], add_help=False)

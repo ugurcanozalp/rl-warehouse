@@ -11,7 +11,8 @@ from typing import Tuple, Union, Dict, Any
 
 import gymnasium as gym
 import torch as th
-from tensorboardX import SummaryWriter
+from torch.utils.tensorboard import SummaryWriter
+from tbparse import SummaryReader
 
 from .episode_memory import EpisodeMemory
 
@@ -84,7 +85,7 @@ class Agent(object):
         self._env.action_space.seed(self._seed)
         self._env.observation_space.seed(self._seed)
         # eval env
-        self._env_eval = gym.make(env_name, render_mode=render_mode, **env_kwargs)
+        self._env_eval = gym.make(env_name, render_mode="none", **env_kwargs)
         self._env_eval.reset(seed=42+self._seed)
         self._env_eval.action_space.seed(42+self._seed)
         self._env_eval.observation_space.seed(42+self._seed)
@@ -288,24 +289,36 @@ class Agent(object):
         step = self._total_env_interactions if step is None else step
         self._logger.add_scalar(log_name, log_value, step)
 
-    def log_grad_step(self, log_name: str, log_value: float):
-        """Log a parameter during training wrt grad step
+    def log_histogram(self, log_name: str, log_value: np.ndarray, step: int = None):
+        """Log a vector during training
 
         Args:
             log_name (str): Name of the logged parameter
-            log_value (float): Value of the logged parameter
+            log_value (np.ndarray): Value of the logged parameter
+            step (int): Step index
         """
-        self._logger.add_scalar(log_name, log_value, self._total_grad_steps)
+        step = self._total_env_interactions if step is None else step
+        self._logger.add_histogram(log_name, log_value, step)
 
-    def log_hparams(self, dict: Dict[str, Union[bool, str, float, int]]):
-        """Log a hyperparameter
+    def log_run_hparams(self, dict: Dict[str, Union[bool, str, float, int]]):
+        """Log a hyperparameters of the run
 
         Args:
             dict (Dict): Dictionary to log
         """
         text = " | hyperparam | value | \n | ----------- | ----------- | " + \
-            "\n".join([f" | {k} | {v:2.4f} | " for k, v in dict.items()])
+            "\n".join([f" {k} : {v:2.4f} " for k, v in dict.items()])
         self._logger.add_text("hyperparameters", text, 0)
+
+    def log_hparams(self, hparams: Dict[str, Union[bool, str, float, int]], 
+            metrics: Dict[str, Union[bool, str, float, int]]):
+        """Log a hyperparameters of the run
+
+        Args:
+            hparams (Dict): Hyperparameter dictionary
+            metrics (Dict): Metrics dictionary
+        """
+        self._logger.add_hparams(hparams, metrics, 0)
 
     def log_text(self, description: str, text: str):
         """Log a textual info
@@ -324,9 +337,8 @@ class Agent(object):
     
     def train_step_rollout(self):
         """Rollout in the environment with self and save transitions to memory.
-
         """
-        action, extra = self.step(self._observation)
+        action, extra = self.step(self._observation, exploit=False)
         if action is None: # it means self says randomly act.
             action = np.tanh(np.random.randn(*self._env.action_space.shape)) # random action between (-1, 1)
         if self._episode_time == 0:
@@ -367,25 +379,30 @@ class Agent(object):
     
     def train(self):
         """Main train loop.
-        
-        Args:
-            test_inverval(int, optional): How frequently test episodes are conducted. 
         """
-        self.train_mode()
+        self.train_mode() # start with training mode
         self._terminate_episode() # initial call for env reset.
-        for i in range(self._max_train_steps): 
+        while self._total_env_interactions < self._max_train_steps:
             self.train_step_rollout() # step inside episode memory
-            self.log_grad_step("total_env_interactions", self._total_env_interactions)
-            if i > self._start_steps:
+            self.log("total_env_interactions", self._total_env_interactions)
+            if self._total_env_interactions > self._start_steps:
                 self.learn_on_step() # learn here.
-            if i % self._eval_interval == 0 and i != 0:
+            if self._total_env_interactions % self._eval_interval == 0 and self._total_env_interactions != 0:
                 self.eval()
                 self.train_mode() # go back to train mode
+    
+    def experiment_end(self): 
+        """The function to be called at the end of experiment, for loggin etc. 
+        """
+        raise NotImplementedError
     
     def eval(self): 
         """Evaluate the agent for fixed number of episodes
         """
         self.eval_mode()
+        #print("inside eval..")
+        #print(self._q.training)
+        #print(self._pi.training)
         value_estimate = np.zeros(self._num_eval_episodes, dtype=np.float32)
         value_error = np.zeros(self._num_eval_episodes, dtype=np.float32)
         score = np.zeros(self._num_eval_episodes, dtype=np.float32)
@@ -412,20 +429,31 @@ class Agent(object):
             # end of the episode
             value_error[e] = value_estimate[e] - discounted_score[e]
         # logging 
-        self.log("eval_score", score.mean())
-        # self.log("eval_discounted_score", discounted_score.mean())
-        # self.log("eval_value_estimate", value_estimate.mean())
-        self.log("eval_value_error", value_error.mean())
+        self.log_histogram("eval_scores", score)
+        self.log("eval_score_mean", score.mean())
+        self.log("eval_score_std", score.std())
+        self.log_histogram("eval_value_errors", value_error)
+        self.log("eval_value_error_mean", value_error.mean())
+        self.log("eval_value_error_std", value_error.std())
 
     def experiment(self):
         current_time = datetime.now().strftime("%b%d_%H-%M-%S")
-        logdir = os.path.join("runs", self._env_name + "_" + current_time)
-        self._logger = SummaryWriter(logdir=logdir)
+        log_dir = os.path.join("runs", self._env_name + "_" + current_time)
+        self._logger = SummaryWriter(log_dir=log_dir)
         # log hyperparameters
-        self.log_hparams(self.hparams) # log available variables..
+        self.log_hparams(self.hparams, {}) # log available variables..
         self.log_text("env_name", self._env_name)
         self.log_text("experiment_time", current_time)
         self.train() # and test sometimes..
+        self.experiment_end()
+
+    @staticmethod
+    def parse_logs(self, log_dir: str):
+        # TODO: Implement it with SummaryReader
+        reader = SummaryReader(log_dir=log_dir, pivot=True)
+        scalars = reader.scalars
+        hparams = reader.hparams
+        return None
 
     @staticmethod
     def add_model_specific_args(parent_parser):

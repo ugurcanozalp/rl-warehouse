@@ -120,7 +120,7 @@ class PPO(Agent):
     def learn_on_step(self): 
         if self.memory._not_computed>0 or self.memory._size==0:
             return # if not ready for computation, return..
-        for _ in range(self._epochs_per_rollout):
+        for i in range(self._epochs_per_rollout):
             for batch_idx in range(self._batch_per_rollout): # get batch..
                 self._total_grad_steps += 1
                 indices = list(range(batch_idx*self._batch_size, (batch_idx+1)*(self._batch_size)))
@@ -154,11 +154,11 @@ class PPO(Agent):
                 clipped = th.logical_or(ratio.gt(1 + self._clip_ratio), ratio.lt(1 - self._clip_ratio))
                 clipfrac = th.as_tensor(clipped, dtype=th.float32).mean().item()
                 #
-                self.log_grad_step("pi_loss", pi_loss)
-                self.log_grad_step("v_loss", v_loss)
-                self.log_grad_step("approx_kl", approx_kl)
-                self.log_grad_step("clipfrac", clipfrac)
-                self.log_grad_step("cross_log_prob", cross_log_prob.mean())
+                self.log("pi_loss", pi_loss)
+                self.log("v_loss", v_loss)
+                self.log("approx_kl", approx_kl)
+                self.log("clipfrac", clipfrac)
+                self.log("cross_log_prob", cross_log_prob.mean())
 
     def _construct_optimizers(self, pi_lr, v_lr):
         """Initialize Adam optimizer."""
@@ -208,6 +208,9 @@ class PPO(Agent):
             #    self.log("return_error", value[t]-cum_return[t], t_global)
         return cum_return, gae
 
+    def experiment_end(self): 
+        pass
+    
     @staticmethod
     def add_model_specific_args(parent_parser):
         parser = ArgumentParser(parents=[parent_parser], add_help=False)
