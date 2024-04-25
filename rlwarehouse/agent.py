@@ -7,15 +7,14 @@ import math
 import random
 import numpy as np
 from datetime import datetime
-from typing import Tuple, Union, Dict, Any
+from typing import List, Tuple, Union, Dict, Any
+import pickle 
 
 import gymnasium as gym
 import torch as th
 from torch.utils.tensorboard import SummaryWriter
 from tbparse import SummaryReader
 import pandas as pd
-import matplotlib.pyplot as plt 
-from matplotlib import colormaps
 
 from .episode_memory import EpisodeMemory
 
@@ -469,58 +468,11 @@ class Agent(object):
                 reader = SummaryReader(log_path=algo_dir, pivot=True)
                 scalars, hparams = reader.scalars, reader.hparams
                 algo_results[algo] = {"scalars": scalars, "hparams": hparams}
+                scalars_dict = {key: np.stack(val.apply(np.array)) for key, val in scalars.items()}
+                with open(os.path.join(algo_dir, "results.pickle"), "wb") as f: 
+                    pickle.dump(scalars_dict, f)
             env_results[env] = algo_results
         return env_results
-    
-    @staticmethod
-    def summarize(env_results: Dict, save_path: str, ncolsrows: Tuple[int], colormap: str = "Set1", smooth_window: int = 5):
-        """Summarize everything about the results
-        """
-        # ex: Agent.summarize(env_results, "runs", (2, 1), colormap="Set1", smooth_window=5)
-        COLORMAP = colormaps.get(colormap)
-        ncol, nrow = ncolsrows
-        fig = plt.figure(figsize=(3*ncol, 4*nrow))
-        assert ncol*nrow == len(env_results), "Number of environments do not match layout"
-        env_dict = {}
-        for i, (env, env_results) in enumerate(env_results.items()):
-            ax = fig.add_subplot(ncol, nrow, i+1)
-            ax.set_title(env)
-            auc_scores, max_scores = np.zeros(len(env_results)), np.zeros(len(env_results))
-            algo_dict = {}
-            for j, (algo, algo_results) in enumerate(env_results.items()):
-                mask = ~algo_results["scalars"]["eval_score"].isnull()
-                step = algo_results["scalars"]["step"][mask]
-                eval_score = np.stack(algo_results["scalars"]["eval_score"][mask].apply(np.array)) 
-                eval_score_mean = eval_score.mean(axis=1) # mean across trials
-                eval_score_var = eval_score.var(axis=1) # var across trials
-                eval_score_std = np.sqrt(eval_score_var)
-                # moving average filtering for better visual
-                eval_score_mean_ma = np.convolve(eval_score_mean, np.ones(smooth_window)/smooth_window, mode="same")
-                eval_score_var_ma = np.convolve(eval_score_var, np.ones(smooth_window)/smooth_window, mode="same")
-                eval_score_std_ma = np.sqrt(eval_score_var_ma)
-                ax.plot(step, eval_score_mean_ma, color=COLORMAP(j), alpha=1.0, label=algo)
-                ax.fill_between(step, 
-                    eval_score_mean_ma - eval_score_std_ma,
-                    eval_score_mean_ma + eval_score_std_ma,
-                    facecolor=COLORMAP(j), alpha=0.3)
-                algo_dict[algo] = {
-                    "auc_scores": eval_score.mean(), 
-                    "max_scores": eval_score.max(), 
-                    "last_scores_mean": eval_score_mean[-1].mean(), 
-                    "last_scores_std": eval_score_std[-1]
-                }
-            env_dict[env] = algo_dict
-            ax.set_ylabel("undiscounted return", fontsize=8)
-            ax.set_xlabel("# env interactions", fontsize=8)
-            if i == 0: # only for first plot
-                ax.legend()
-            ax.grid()
-        plt.tight_layout()
-        fig.savefig(os.path.join(save_path, "plot.png"))
-        fig.show()
-        env_df = pd.concat({env: pd.DataFrame.from_dict(algo_dict) for env, algo_dict in env_dict.items()})
-        env_df.to_csv(os.path.join(save_path, "summary.csv"))
-        return env_df
     
     @staticmethod
     def add_model_specific_args(parent_parser):

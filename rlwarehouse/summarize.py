@@ -1,0 +1,92 @@
+
+import os 
+from typing import List, Tuple, Union, Dict, Any
+import pickle 
+
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt 
+from matplotlib import colormaps
+
+@staticmethod
+def summarize(path: os.PathLike, result_path: os.PathLike, ncolsrows: Tuple[int], colormap: str = "Set1", smooth_window: int = 5):
+    """Summarize everything about the results
+    """
+    # ex: Agent.summarize("runs", "res", (6, 1), colormap="Set1", smooth_window=5)
+    COLORMAP = colormaps.get(colormap)
+    ncol, nrow = ncolsrows
+    fig_score = plt.figure(figsize=(16, 9))
+    fig_error = plt.figure(figsize=(16, 9))
+    num_envs = len(os.listdir(path))
+    assert ncol*nrow == len(os.listdir(path)), "Number of environments do not match layout"
+    env_dict = {}
+    for i, env in enumerate(os.listdir(path)):
+        ax_score = fig_score.add_subplot(ncol, nrow, i+1)
+        ax_score.set_title(env)
+        ax_error = fig_error.add_subplot(ncol, nrow, i+1)
+        ax_error.set_title(env)
+        auc_scores, max_scores = np.zeros(num_envs), np.zeros(num_envs)
+        algo_dict = {}
+        env_path = os.path.join(path, env)
+        for j, algo in enumerate(os.listdir(env_path)):
+            with open(os.path.join(env_path, algo, "results.pickle"), "rb") as f: # reads as str
+                algo_results = pickle.load(f)
+            mask = ~(algo_results["eval_score"] == np.nan).any(axis=1)
+            step = algo_results["step"][mask]
+            eval_score = algo_results["eval_score"][mask]
+            # -----eval score-----
+            eval_score_mean = eval_score.mean(axis=1) # mean across trials
+            eval_score_var = eval_score.var(axis=1) # var across trials
+            eval_score_std = np.sqrt(eval_score_var)
+            # moving average filtering for better visual
+            eval_score_mean_ma = np.convolve(eval_score_mean, np.ones(smooth_window)/smooth_window, mode="same")
+            eval_score_var_ma = np.convolve(eval_score_var, np.ones(smooth_window)/smooth_window, mode="same")
+            eval_score_std_ma = np.sqrt(eval_score_var_ma)
+            ax_score.plot(step, eval_score_mean_ma, color=COLORMAP(j), alpha=1.0, label=algo)
+            ax_score.fill_between(step, 
+                eval_score_mean_ma - eval_score_std_ma,
+                eval_score_mean_ma + eval_score_std_ma,
+                facecolor=COLORMAP(j), alpha=0.3)
+            # -----eval value error-----
+            if "eval_value_error" in algo_results: 
+                eval_error = algo_results["eval_value_error"][mask]
+                eval_error_mean = eval_error.mean(axis=1) # mean across trials
+                eval_error_var = eval_error.var(axis=1) # var across trials
+                eval_error_std = np.sqrt(eval_error_var)
+                # moving average filtering for better visual
+                eval_error_mean_ma = np.convolve(eval_error_mean, np.ones(smooth_window)/smooth_window, mode="same")
+                eval_error_var_ma = np.convolve(eval_error_var, np.ones(smooth_window)/smooth_window, mode="same")
+                eval_error_std_ma = np.sqrt(eval_error_var_ma)
+                ax_error.plot(step, eval_error_mean_ma, color=COLORMAP(j), alpha=1.0, label=algo)
+                ax_error.fill_between(step, 
+                    eval_error_mean_ma - eval_error_std_ma,
+                    eval_error_mean_ma + eval_error_std_ma,
+                    facecolor=COLORMAP(j), alpha=0.3)
+            # 
+            algo_dict[algo] = {
+                "auc_scores": eval_score.mean(), 
+                "max_scores": eval_score.max(), 
+                "last_scores_mean": eval_score_mean[-1].mean(), 
+                "last_scores_std": eval_score_std[-1]
+            }
+        env_dict[env] = algo_dict
+        ax_score.set_ylabel("total reward", fontsize=10)
+        ax_score.set_xlabel("# env interactions", fontsize=10)
+        ax_error.set_ylabel("value error", fontsize=10)
+        ax_error.set_xlabel("# env interactions", fontsize=10)
+        if i == 0: # only for first plot
+            ax_score.legend()
+            ax_error.legend()
+        ax_score.grid()
+        ax_error.grid()
+    fig_score.tight_layout()
+    fig_error.tight_layout()
+    if not os.path.isdir(result_path):
+        os.mkdir(result_path)
+    fig_score.savefig(os.path.join(result_path, "score.png"))
+    fig_error.savefig(os.path.join(result_path, "error.png"))
+    fig_score.show()
+    fig_error.show()
+    env_df = pd.concat({env: pd.DataFrame.from_dict(algo_dict) for env, algo_dict in env_dict.items()})
+    env_df.to_csv(os.path.join(result_path, "summary.csv"))
+    return env_df
