@@ -22,6 +22,7 @@ class SAC(Agent):
         alpha: float = 0.2, 
         tau: float = 0.005, 
         batch_per_step: int = 1, 
+        policy_delay: int = 1,
         pi_lr: float = 3e-4,
         q_lr: float = 1e-3, 
         batch_size: int = 256, 
@@ -35,6 +36,7 @@ class SAC(Agent):
         self._alpha = alpha
         self._tau = tau
         self._batch_per_step = batch_per_step
+        self._policy_delay = policy_delay
         self._batch_size = batch_size 
         self._q_lr = q_lr
         self._pi_lr = pi_lr
@@ -162,32 +164,33 @@ class SAC(Agent):
             self.log("q_loss", qvalue_loss)
             self.log("q1_loss", qvalue1_loss)
             self.log("q2_loss", qvalue2_loss)
-            self.log("q_avg", (qvalue1_est+qvalue2_est)/2)
+            self.log("q_avg", 0.5*(qvalue1_est+qvalue2_est).mean())
             self.log("q_std_avg", q_std.mean())
             # train policy one time
-            self._pi_optim.zero_grad()
-            action_distr = self._pi(observation)
-            action_imaginary = action_distr.rsample()
-            entropy = - action_distr.log_prob(action_imaginary)
-            if self._pi.independent_actions: 
-                entropy = entropy.sum(dim=-1, keepdim=True)
-            q1_onpolicy = self._q1(observation, action_imaginary)
-            q2_onpolicy = self._q2(observation, action_imaginary)
-            q_onpolicy = th.min(q1_onpolicy, q2_onpolicy)
-            q_std_onpolicy = 0.5*(q1_onpolicy - q2_onpolicy).abs()
-            q_mean_onpolicy = 0.5*(q1_onpolicy + q2_onpolicy)
-            pi_loss = -(q_onpolicy + self._alpha * entropy).mean()
-            pi_loss.backward()
-            self._pi_optim.step()
-            self.log("pi_loss", pi_loss)
-            self.log("pi_entropy_avg", entropy.mean())
-            self.log("q_onpolicy_avg", q_mean_onpolicy.mean())
-            self.log("q_std_onpolicy_avg", q_std_onpolicy.stddev.mean())
-            # if autotune
-            if self._autotune:
-                entropy_ = entropy.mean().cpu().item()
-                self._alpha = self._alpha * math.exp(self._q_lr * ( self._target_entropy - entropy_))
-                self.log("alpha", self._alpha)
+            if (i+1) % self._policy_delay == 0:
+                self._pi_optim.zero_grad()
+                action_distr = self._pi(observation)
+                action_imaginary = action_distr.rsample()
+                entropy = - action_distr.log_prob(action_imaginary)
+                if self._pi.independent_actions: 
+                    entropy = entropy.sum(dim=-1, keepdim=True)
+                q1_onpolicy = self._q1(observation, action_imaginary)
+                q2_onpolicy = self._q2(observation, action_imaginary)
+                q_onpolicy = th.min(q1_onpolicy, q2_onpolicy)
+                q_std_onpolicy = 0.5*(q1_onpolicy - q2_onpolicy).abs()
+                q_mean_onpolicy = 0.5*(q1_onpolicy + q2_onpolicy)
+                pi_loss = -(q_onpolicy + self._alpha * entropy).mean()
+                pi_loss.backward()
+                self._pi_optim.step()
+                self.log("pi_loss", pi_loss)
+                self.log("pi_entropy_avg", entropy.mean())
+                self.log("q_onpolicy_avg", q_mean_onpolicy.mean())
+                self.log("q_std_onpolicy_avg", q_std_onpolicy.mean())
+                # if autotune
+                if self._autotune:
+                    entropy_ = entropy.mean().cpu().item()
+                    self._alpha = self._alpha * math.exp(self._q_lr * ( self._target_entropy - entropy_))
+                    self.log("alpha", self._alpha)
 
     def _construct_optimizers(self, pi_lr, q_lr):
         """Initialize Adam optimizer."""

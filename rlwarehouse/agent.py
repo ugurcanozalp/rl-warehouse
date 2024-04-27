@@ -49,8 +49,9 @@ class Agent(object):
                  eval_interval: int = 10000, 
                  wrapper: gym.ObservationWrapper = None, 
                  render_mode: str = "human", 
-                 recording: bool = False, 
+                 recording: bool = True, 
                  logging: bool = False, 
+                 algo_tag: str = "", 
                  env_kwargs: Dict = dict(), 
                  **memory_kwargs
                  ):
@@ -79,6 +80,7 @@ class Agent(object):
         self._total_grad_steps = 0 # increment it as you learn from a single batch
         self._recording = recording
         self._logging = logging
+        self._algo_tag = algo_tag
         # env
         self._env_name = env_name
         self._env = gym.make(env_name, render_mode=render_mode, **env_kwargs)
@@ -185,19 +187,18 @@ class Agent(object):
         self._episode_value_estimate = 0
         self._episode_value_error = 0
         self._episode_time = 0
-        if self._recording:
-            self._clear_record()
 
-    def _clear_record(self):
+    def _clear_record(self, obs0):
         """The agent saves state-action history, this function clears the records.
         """
-        self._obs_history = np.zeros((self._episode_max_time+1, *self._env.observation_space.shape), dtype=self._env.observation_space.dtype)
-        self._obs_history[0] = self._observation # clear while adding initial state to record
-        self._act_history = np.zeros((self._episode_max_time, *self._env.action_space.shape), dtype=self._env.action_space.dtype)
-        self._reward_history = np.zeros(self._episode_max_time, dtype=np.float32)
-        self._done_history = np.ones(self._episode_max_time, dtype=np.bool_)
+        self._obs_history = np.nan * np.zeros((self._episode_max_time+1, *self._env.observation_space.shape), dtype=self._env.observation_space.dtype)
+        self._obs_history[0] = obs0 # clear while adding initial state to record
+        self._act_history = np.nan * np.zeros((self._episode_max_time, *self._env.action_space.shape), dtype=self._env.action_space.dtype)
+        self._reward_history = np.nan * np.zeros(self._episode_max_time, dtype=np.float32)
+        self._done_history = np.nan * np.ones(self._episode_max_time, dtype=np.bool_)
+        self._truncated_history = np.nan * np.ones(self._episode_max_time, dtype=np.bool_)
 
-    def _record(self, next_obs: np.ndarray, act: np.ndarray, reward: np.ndarray, done: np.ndarray, time: int):
+    def _record(self, next_obs: np.ndarray, act: np.ndarray, reward: np.ndarray, done: np.ndarray, truncated: np.ndarray, time: int):
         """This function is used to record transition tuple onto a time point.
         
         Args:
@@ -205,12 +206,14 @@ class Agent(object):
             act (np.ndarray): Action
             reward (np.ndarray): Reward
             done (np.ndarray): Done flag
+            truncated (np.ndarray): Truncation flag
             time (int): The time index to save transition
         """
         self._obs_history[time+1] = next_obs
         self._act_history[time] = act
         self._reward_history[time] = reward
         self._done_history[time] = done
+        self._truncated_history[time] = truncated
 
     @th.no_grad()
     def step(self, obs: np.ndarray, warmup = False, exploit = False):
@@ -355,8 +358,6 @@ class Agent(object):
             self._episode_value_estimate = self.value(self._observation)
         next_observation, reward, done, truncated, _ = self._env.step(self._adjust_action(action))
         is_episode_end = done or truncated
-        if self._recording:
-            self._record(next_observation, action, reward, done, self._episode_time)
         self._episode_score += reward
         self._episode_discounted_score += pow(self.gamma, self._episode_time) * reward
         self._total_env_interactions += 1
@@ -413,6 +414,7 @@ class Agent(object):
         score = 0
         discounted_score = 0
         time = 0
+        self.reset()
         observation, _ = self._env_eval.reset()
         value_estimate = self.value(observation)
         is_episode_end = False
@@ -422,8 +424,6 @@ class Agent(object):
                 action = np.tanh(np.random.randn(*self._env.action_space.shape)) # random action between (-1, 1)
             next_observation, reward, done, truncated, _ = self._env_eval.step(self._adjust_action(action))
             is_episode_end = done or truncated
-            if self._recording:
-                self._record(next_observation, action, reward, done, self._episode_time)
             score += reward
             discounted_score += pow(self.gamma, time) * reward
             time += 1
@@ -435,9 +435,35 @@ class Agent(object):
         self.log("eval_score", score, bypass=True)
         self.log("eval_value_error", value_error, bypass=True)
 
+    def eval_rollout(self): 
+        self.eval_mode()
+        score = 0
+        discounted_score = 0
+        time = 0
+        observation, _ = self._env_eval.reset()
+        if self._recording:
+            self._clear_record(observation)
+        self.reset()
+        is_episode_end = False
+        while not is_episode_end:
+            action, _ = self.step(observation, exploit=True)
+            if action is None: # it means self says randomly act.
+                action = np.tanh(np.random.randn(*self._env.action_space.shape)) # random action between (-1, 1)
+            next_observation, reward, done, truncated, _ = self._env_eval.step(self._adjust_action(action))
+            is_episode_end = done or truncated
+            if self._recording:
+                self._record(next_observation, action, reward, done, truncated, time)
+            score += reward
+            discounted_score += pow(self.gamma, time) * reward
+            time += 1
+            # update observation
+            observation = next_observation
+        print(f"Undiscounted Score: {score}")
+        print(f"Discounted Score: {discounted_score}")
+
     def experiment(self):
         current_time = datetime.now().strftime("%b%d_%H-%M-%S")
-        log_dir = os.path.join("runs", self._env_name, self.algo_name, current_time)
+        log_dir = os.path.join("runs", self._env_name, self.algo_name+self._algo_tag, current_time)
         self._logger = SummaryWriter(log_dir=log_dir)
         # log hyperparameters
         self.log_hparams(self.hparams, {}) # log available variables..
@@ -487,7 +513,8 @@ class Agent(object):
         parser.add_argument("--device", type=str, default="cuda")
         parser.add_argument("--compute_period", type=int, default=-1)
         parser.add_argument("--render_mode", type=str, default="human")
-        parser.add_argument("--recording", action="store_true", default=False)
+        parser.add_argument("--recording", action="store_true", default=True)
         parser.add_argument("--logging", action="store_true", default=False)
+        parser.add_argument("--algo_tag", type=str, default="")
         #parser.add_argument("--env_kwargs", type=json.loads())
         return parser
