@@ -2,7 +2,7 @@
 from argparse import ArgumentParser
 
 from rlwarehouse.algos import DBAC
-import gym_copter
+
 parser = ArgumentParser()
 parser = DBAC.add_model_specific_args(parser)
 args = parser.parse_args()

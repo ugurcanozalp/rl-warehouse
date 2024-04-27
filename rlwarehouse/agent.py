@@ -83,19 +83,23 @@ class Agent(object):
         self._algo_tag = algo_tag
         # env
         self._env_name = env_name
+        render_mode = None if render_mode=="none" else render_mode
         self._env = gym.make(env_name, render_mode=render_mode, **env_kwargs)
         self._env.reset(seed=self._seed)
         self._env.action_space.seed(self._seed)
         self._env.observation_space.seed(self._seed)
         # eval env
-        self._env_eval = gym.make(env_name, render_mode="none", **env_kwargs)
+        self._env_eval = gym.make(env_name, render_mode=None, **env_kwargs) # render_mode="none", 
         self._env_eval.reset(seed=42+self._seed)
         self._env_eval.action_space.seed(42+self._seed)
         self._env_eval.observation_space.seed(42+self._seed)
         # 
         if wrapper is not None:
             self._env = wrapper(self._env) # if there is a wrapper.
-        self._episode_max_time = self._env._max_episode_steps # environment time limit
+        try:
+            self._episode_max_time = self._env._max_episode_steps # environment time limit
+        except: 
+            self._episode_max_time = 1000
         self._episode_time = 0 # episode counter
         self._compute_period = compute_period
         self._total_env_interactions = 0
