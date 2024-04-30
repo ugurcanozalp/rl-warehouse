@@ -38,19 +38,16 @@ class EpisodeMemory(object):
         self._derived_fields = derived_fields # derived on episode end
         self._insert_fields = self._main_fields + self._extra_fields # added to memory at each step
         self._fields = self._insert_fields + self._derived_fields
-        #
         self._buffer_capacity = buffer_capacity
-        self._size = 0
-        self._not_computed = 0
-        self._buffer = {field: deque(maxlen=self._buffer_capacity) for field in self._fields}
         self.clear() # clears everything 
 
     def clear(self):
         """Clear the buffer and all calculated stuff. Also, reset the environment.
         """
+        self._ptr = 0 
         self._size = 0
         self._not_computed = 0
-        self._buffer = {field: deque(maxlen=self._buffer_capacity) for field in self._fields}     
+        self._buffer = {field: np.empty(self._buffer_capacity, dtype=object) for field in self._fields} 
         
     def __getitem__(self, key):
         if key in self._fields:
@@ -62,10 +59,16 @@ class EpisodeMemory(object):
         """Insert one time step transition to memory
         """
         for key, value in zip(self._insert_fields, data):
-            self._buffer[key].append(value)
+            self._buffer[key][self._ptr] = value
         self._not_computed += 1
         if self._size < self._buffer_capacity:
             self._size += 1 
+        self._ptr = (self._ptr + 1) % self._buffer_capacity
+        #if self._ptr == self._buffer_capacity-1:
+        #    self._ptr = self._buffer_capacity # increase by 1 do not make 0.
+        #else:
+        #    self._ptr = (self._ptr + 1) % self._buffer_capacity
+        #print(self._ptr)
 
     def _sample_by_indices(self, indices: List[int]):
         """Sample data given the indices
@@ -78,16 +81,14 @@ class EpisodeMemory(object):
         """
         output = []
         for field in self._fields:
-            sampled = [self._buffer[field][i] for i in indices]
-            # stacked = th.from_numpy(np.stack(sampled, axis=0)).to(self._device)
+            sampled = np.stack(self._buffer[field][indices], axis=0)
             stacked = th.as_tensor(np.stack(sampled, axis=0), device=self._device)
             output.append(stacked)
         return tuple(output)
 
     def _get_last_n(self, deq, n):
-        idxs = range(self._size - n, self._size)
-        elements = [deq[i] for i in idxs]
-        return np.stack(elements, axis=0)
+        idxs = list(map(lambda i: i%self._buffer_capacity, range(self._ptr - n, self._ptr))) # ptr points to empty first field
+        return np.stack(deq[idxs], axis=0)
         
     def _compute(self, agent: Callable):
         """Compute derived values and save to memory. Call it at the end of 
@@ -102,7 +103,10 @@ class EpisodeMemory(object):
         episode_args = (self._get_last_n(self._buffer[key], self._not_computed) for key in self._insert_fields)
         episode_results = agent.compute_function(*episode_args)
         for key, value in zip(self._derived_fields, episode_results):
-            self._buffer[key].extend(value)
+            ptr = self._ptr if self._ptr != self._buffer_capacity else self._buffer_capacity
+            for i, j in enumerate(range(ptr-len(value), ptr)):
+                self._buffer[key][j] = value[i]
+            #self._buffer[key][self._ptr-len(value):self._ptr] = value
         self._not_computed = 0
 
     def sample(self, sample_size: int):

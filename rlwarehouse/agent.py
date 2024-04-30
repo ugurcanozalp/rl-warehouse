@@ -118,6 +118,7 @@ class Agent(object):
                                     extra_fields=self.extra_fields, 
                                     derived_fields=self.derived_fields, 
                                     **memory_kwargs)
+
     @property
     def algo_name(self):
         "Retrieve algorithm name"
@@ -467,7 +468,7 @@ class Agent(object):
 
     def experiment(self):
         current_time = datetime.now().strftime("%b%d_%H-%M-%S")
-        log_dir = os.path.join("runs", self._env_name, self.algo_name+self._algo_tag, current_time)
+        log_dir = os.path.join("runs", self._env_name, self.algo_name+self._algo_tag, "seed"+str(self._seed)+current_time)
         self._logger = SummaryWriter(log_dir=log_dir)
         # log hyperparameters
         self.log_hparams(self.hparams, {}) # log available variables..
