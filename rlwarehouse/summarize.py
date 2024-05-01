@@ -1,7 +1,7 @@
 
 import os 
 from typing import List, Tuple, Union, Dict, Any
-import pickle 
+import jsonlines
 
 import numpy as np
 import pandas as pd
@@ -12,7 +12,7 @@ from matplotlib import colormaps
 def summarize(path: os.PathLike, result_path: os.PathLike, ncolsrows: Tuple[int], colormap: str = "Set1", smooth_window: int = 5):
     """Summarize everything about the results
     """
-    # ex: Agent.summarize("runs", "res", (6, 1), colormap="Set1", smooth_window=5)
+    # ex: Agent.summarize("logs", "res", (6, 1), colormap="Set1", smooth_window=5)
     COLORMAP = colormaps.get(colormap)
     ncol, nrow = ncolsrows
     fig_score = plt.figure(figsize=(16, 9))
@@ -29,11 +29,32 @@ def summarize(path: os.PathLike, result_path: os.PathLike, ncolsrows: Tuple[int]
         algo_dict = {}
         env_path = os.path.join(path, env)
         for j, algo in enumerate(os.listdir(env_path)):
-            with open(os.path.join(env_path, algo, "results.pickle"), "rb") as f: # reads as str
-                algo_results = pickle.load(f)
-            mask = ~(algo_results["eval_score"] == np.nan).any(axis=1)
-            step = algo_results["step"][mask]
-            eval_score = algo_results["eval_score"][mask]
+            algo_path = os.path.join(env_path, algo)
+            results = {}
+            for k, trial in enumerate(os.listdir(algo_path)):
+                trial_dir = os.path.join(algo_path, trial)
+                with jsonlines.open(os.path.join(trial_dir, "data.jsonl"), "r") as f: # reads as str
+                    #print(os.path.join(trial_dir, "data.jsonl"))
+                    for line in f:
+                        step_ = line["step"]
+                        if step_ not in results.keys(): 
+                            results[step_] = {}
+                        for param, valparam in line.items():
+                            #print(f"{param} = {valparam}")
+                            if param not in results[step_]:
+                                results[step_][param] = []
+                            results[step_][param].append(valparam)
+                            #print(results[step_])
+                            #print("---")
+            step = list(results.keys())
+            step.sort() # sort stuff
+            #print(results)
+            eval_score = np.array([results[s]["eval_score"] for s in step])
+            if "eval_value_error" in results[step[0]]:
+                eval_error = np.array([results[s]["eval_value_error"] for s in step])
+            else:
+                eval_error = None
+            step = np.array(step) # make it also numpy array
             # -----eval score-----
             eval_score_mean = eval_score.mean(axis=1) # mean across trials
             eval_score_var = eval_score.var(axis=1) # var across trials
@@ -48,8 +69,7 @@ def summarize(path: os.PathLike, result_path: os.PathLike, ncolsrows: Tuple[int]
                 eval_score_mean_ma + eval_score_std_ma,
                 facecolor=COLORMAP(j), alpha=0.3)
             # -----eval value error-----
-            if "eval_value_error" in algo_results: 
-                eval_error = algo_results["eval_value_error"][mask]
+            if eval_error is not None: 
                 eval_error_mean = eval_error.mean(axis=1) # mean across trials
                 eval_error_var = eval_error.var(axis=1) # var across trials
                 eval_error_std = np.sqrt(eval_error_var)

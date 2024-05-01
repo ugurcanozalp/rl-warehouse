@@ -128,7 +128,8 @@ dmypy.json
 # Pyre type checker
 .pyre/
 
-# training results added to runs folder
+# training results added to runs and logs folders
 runs/*
 runs*/*
-
+logs/*
+logs*/*

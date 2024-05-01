@@ -14,6 +14,7 @@ import gymnasium as gym
 import torch as th
 from torch.utils.tensorboard import SummaryWriter
 from tbparse import SummaryReader
+from .logger import Logger
 import pandas as pd
 
 from .episode_memory import EpisodeMemory
@@ -51,6 +52,7 @@ class Agent(object):
                  render_mode: str = "human", 
                  recording: bool = True, 
                  logging: bool = False, 
+                 tblog: bool = False, 
                  algo_tag: str = "", 
                  env_kwargs: Dict = dict(), 
                  **memory_kwargs
@@ -80,6 +82,7 @@ class Agent(object):
         self._total_grad_steps = 0 # increment it as you learn from a single batch
         self._recording = recording
         self._logging = logging
+        self._tblog = tblog
         self._algo_tag = algo_tag
         # env
         self._env_name = env_name
@@ -302,8 +305,10 @@ class Agent(object):
         """
         if self._logging or bypass:
             step = self._total_env_interactions if step is None else step
-            self._logger.add_scalar(log_name, log_value, step)
-
+            self._logger.log(log_name, log_value, step)
+            if self._tblog:
+                self._tblogger.add_scalar(log_name, log_value, step)
+            
     def log_histogram(self, log_name: str, log_value: np.ndarray, step: int = None):
         """Log a vector during training
 
@@ -316,27 +321,13 @@ class Agent(object):
             step = self._total_env_interactions if step is None else step
             self._logger.add_histogram(log_name, log_value, step)
 
-    '''not used for now
-    def log_run_hparams(self, dict: Dict[str, Union[bool, str, float, int]]):
-        """Log a hyperparameters of the run
-
-        Args:
-            dict (Dict): Dictionary to log
-        """
-        text = " | hyperparam | value | \n | ----------- | ----------- | " + \
-            "\n".join([f" {k} : {v:2.4f} " for k, v in dict.items()])
-        self._logger.add_text("hyperparameters", text, 0)
-    '''
-
-    def log_hparams(self, hparams: Dict[str, Union[bool, str, float, int]], 
-            metrics: Dict[str, Union[bool, str, float, int]]):
+    def log_hparams(self, hparams: Dict[str, Union[bool, str, float, int]]):
         """Log a hyperparameters of the run
 
         Args:
             hparams (Dict): Hyperparameter dictionary
-            metrics (Dict): Metrics dictionary
         """
-        self._logger.add_hparams(hparams, metrics, 0)
+        self._logger.log_hparams(hparams)
 
     def log_text(self, description: str, text: str): 
         """Log a textual info
@@ -345,7 +336,9 @@ class Agent(object):
             description (str): Text description
             text (str): Text to be logged
         """
-        self._logger.add_text(description, text)
+        self._logger.log_text(description, text)
+        if self._tblog:
+            self._logger.add_text(description, text)
 
     def _adjust_action(self, action):
         """This function takes action output of network bounded in (-1, 1)
@@ -408,7 +401,7 @@ class Agent(object):
                 self.train_mode() # go back to train mode
     
     def experiment_end(self): 
-        """The function to be called at the end of experiment, for loggin etc. 
+        """The function to be called at the end of experiment, for logging etc. 
         """
         raise NotImplementedError
     
@@ -468,42 +461,20 @@ class Agent(object):
 
     def experiment(self):
         current_time = datetime.now().strftime("%b%d_%H-%M-%S")
-        log_dir = os.path.join("runs", self._env_name, self.algo_name+self._algo_tag, "seed"+str(self._seed)+current_time)
-        self._logger = SummaryWriter(log_dir=log_dir)
+        logname = os.path.join(self._env_name, self.algo_name+self._algo_tag, "seed"+str(self._seed)+current_time)
+        self._logger = Logger(path=os.path.join("logs", logname))
+        self._logger.open()
+        if self._tblog:
+            log_dir = os.path.join("runs", logname)
+            self._tblogger = SummaryWriter(log_dir=log_dir)
         # log hyperparameters
-        self.log_hparams(self.hparams, {}) # log available variables..
+        self.log_hparams(self.hparams) # log available variables..
         self.log_text("env_name", self._env_name)
         self.log_text("experiment_time", current_time)
+        self.log_text("seed", self._seed)
         self.train() # and test sometimes..
+        self._logger.close()
         self.experiment_end()
-    
-    @staticmethod
-    def parse_logs(run_dir: str) -> None:
-        """Parse results of the overall experiments
-
-        Args:
-            run_dir (str): Path where runs are stored. Subfolders are env names 
-            and inner folders are algo names.
-
-        Returns:
-            Dict: Returns results as a dictionary. 
-        """
-        env_names = os.listdir(run_dir)
-        env_results = {} # fill in it 
-        for env in env_names:
-            env_dir = os.path.join(run_dir, env)
-            algo_names = os.listdir(env_dir)
-            algo_results = {} # fill in it 
-            for algo in algo_names:
-                algo_dir = os.path.join(env_dir, algo)
-                reader = SummaryReader(log_path=algo_dir, pivot=True)
-                scalars, hparams = reader.scalars, reader.hparams
-                algo_results[algo] = {"scalars": scalars, "hparams": hparams}
-                scalars_dict = {key: np.stack(val.apply(np.array)) for key, val in scalars.items()}
-                with open(os.path.join(algo_dir, "results.pickle"), "wb") as f: 
-                    pickle.dump(scalars_dict, f)
-            env_results[env] = algo_results
-        return env_results
     
     @staticmethod
     def add_model_specific_args(parent_parser):
@@ -520,6 +491,7 @@ class Agent(object):
         parser.add_argument("--render_mode", type=str, default="human")
         parser.add_argument("--recording", action="store_true", default=True)
         parser.add_argument("--logging", action="store_true", default=False)
+        parser.add_argument("--tblog", action="store_true", default=False)
         parser.add_argument("--algo_tag", type=str, default="")
         #parser.add_argument("--env_kwargs", type=json.loads())
         return parser
