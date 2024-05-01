@@ -3,3 +3,4 @@ mujoco>=2.3.7
 gymnasium>=0.29.1
 tensorboardX>=2.6.1
 tbparse>=0.0.8
+jsonlines
