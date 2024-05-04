@@ -10,7 +10,7 @@ from torch.optim import Adam, AdamW, Optimizer
 from ..agent import Agent
 from ..nets import policy_map, probabilistic_qvalue_map
 
-# optbeta        ->        Ant = 1.0, Hopper = 0.75, Walker2d = 0.50, Humanoid = 0.75, HalfCheetah = 0.5
+# optbeta        ->        Ant = 1.0, Hopper = 0.75, Walker2d = 0.50, Humanoid = 0.75, HalfCheetah = 0.25
 # target entropy ->        Ant = -4 , Hopper = -1  , Walker2d = -3  , Humanoid = -2  , HalfCheetah = -3
 
 class DBAC(Agent):
@@ -59,7 +59,7 @@ class DBAC(Agent):
             param.requires_grad = False
         self._hard_update(self._q, self._q_target)
         # optimizers
-        self._construct_optimizers(pi_lr, q_lr)
+        self._construct_optimizers()
         
     @property
     def extra_fields(self):
@@ -144,9 +144,9 @@ class DBAC(Agent):
             q_crossentropy = - q_distr.log_prob(q_target_sample) # batch, 1
             q_obj = q_crossentropy
             q_loss = q_obj.mean()
-            self.log("q_loss", q_loss)
-            self.log("q_avg", q_distr.mean.mean())
-            self.log("q_std_avg", q_distr.stddev.mean())
+            self.log("q_loss", q_loss.item())
+            self.log("q_avg", q_distr.mean.mean().item())
+            self.log("q_std_avg", q_distr.stddev.mean().item())
             q_loss.backward()
             self._q_optim.step()
             self._soft_update(self._q, self._q_target)
@@ -162,10 +162,10 @@ class DBAC(Agent):
                 q_onpolicy = q_onpolicy_distr.mean - self._beta * q_onpolicy_distr.stddev
                 pi_obj = - (q_onpolicy + self._alpha * pi_entropy)
                 pi_loss = pi_obj.mean()
-                self.log("pi_loss", pi_loss)
-                self.log("pi_entropy_avg", pi_entropy.mean())
-                self.log("q_onpolicy_avg", q_onpolicy.mean())
-                self.log("q_std_onpolicy_avg", q_onpolicy_distr.stddev.mean())
+                self.log("pi_loss", pi_loss.item())
+                self.log("pi_entropy_avg", pi_entropy.mean().item())
+                self.log("q_onpolicy_avg", q_onpolicy.mean().item())
+                self.log("q_std_onpolicy_avg", q_onpolicy_distr.stddev.mean().item())
                 pi_loss.backward()
                 self._pi_optim.step()
                 # if autotune
@@ -191,9 +191,9 @@ class DBAC(Agent):
         }
         return param
     
-    def _construct_optimizers(self, pi_lr, q_lr):
+    def _construct_optimizers(self):
         """Initialize Adam optimizer."""
-        self._pi_optim = AdamW(self._pi.parameters(), lr=pi_lr)
+        self._pi_optim = AdamW(self._pi.parameters(), lr=self._pi_lr)
         self._q_optim = AdamW(self._q.parameters(), lr=self._q_lr)
 
     def train_mode(self):

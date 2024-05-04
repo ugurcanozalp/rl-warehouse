@@ -54,7 +54,7 @@ class SAC(Agent):
         for param in self._q2_target.parameters():
             param.requires_grad = False
         # optimizers
-        self._construct_optimizers(pi_lr, q_lr)
+        self._construct_optimizers()
         
     @property
     def hparams(self):
@@ -161,11 +161,11 @@ class SAC(Agent):
             self._q_optim.step()
             self._soft_update(self._q1, self._q1_target)
             self._soft_update(self._q2, self._q2_target)
-            self.log("q_loss", qvalue_loss)
-            self.log("q1_loss", qvalue1_loss)
-            self.log("q2_loss", qvalue2_loss)
-            self.log("q_avg", 0.5*(qvalue1_est+qvalue2_est).mean())
-            self.log("q_std_avg", q_std.mean())
+            self.log("q_loss", qvalue_loss.item())
+            self.log("q1_loss", qvalue1_loss.item())
+            self.log("q2_loss", qvalue2_loss.item())
+            self.log("q_avg", 0.5*(qvalue1_est+qvalue2_est).mean().item())
+            self.log("q_std_avg", q_std.mean().item())
             # train policy one time
             if (i+1) % self._policy_delay == 0:
                 self._pi_optim.zero_grad()
@@ -182,23 +182,23 @@ class SAC(Agent):
                 pi_loss = -(q_onpolicy + self._alpha * entropy).mean()
                 pi_loss.backward()
                 self._pi_optim.step()
-                self.log("pi_loss", pi_loss)
-                self.log("pi_entropy_avg", entropy.mean())
-                self.log("q_onpolicy_avg", q_mean_onpolicy.mean())
-                self.log("q_std_onpolicy_avg", q_std_onpolicy.mean())
+                self.log("pi_loss", pi_loss.item())
+                self.log("pi_entropy_avg", entropy.mean().item())
+                self.log("q_onpolicy_avg", q_mean_onpolicy.mean().item())
+                self.log("q_std_onpolicy_avg", q_std_onpolicy.mean().item())
                 # if autotune
                 if self._autotune:
                     entropy_ = entropy.mean().cpu().item()
                     self._alpha = self._alpha * math.exp(self._q_lr * ( self._target_entropy - entropy_))
                     self.log("alpha", self._alpha)
 
-    def _construct_optimizers(self, pi_lr, q_lr):
+    def _construct_optimizers(self):
         """Initialize Adam optimizer."""
-        self._pi_optim = AdamW(self._pi.parameters(), lr=pi_lr)
+        self._pi_optim = AdamW(self._pi.parameters(), lr=self._pi_lr)
         # q_optim = Adam(self._q1.parameters(), lr=self._q_lr)
         self._q_optim = AdamW(
             [{'params': self._q1.parameters()}, {'params': self._q2.parameters()}], 
-            lr=q_lr
+            lr=self._q_lr
         )
 
     def train_mode(self):

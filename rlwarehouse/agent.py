@@ -319,7 +319,7 @@ class Agent(object):
         """
         if self._logging:
             step = self._total_env_interactions if step is None else step
-            self._logger.add_histogram(log_name, log_value, step)
+            self._tblogger.add_histogram(log_name, log_value, step)
 
     def log_hparams(self, hparams: Dict[str, Union[bool, str, float, int]]):
         """Log a hyperparameters of the run
@@ -338,7 +338,7 @@ class Agent(object):
         """
         self._logger.log_text(description, text)
         if self._tblog:
-            self._logger.add_text(description, text)
+            self._tblogger.add_text(description, text)
 
     def _adjust_action(self, action):
         """This function takes action output of network bounded in (-1, 1)
@@ -378,9 +378,9 @@ class Agent(object):
         if is_episode_end: # end of the episode
             self._episode_value_error = self._episode_value_estimate - self._episode_discounted_score
             self.log("episode_score", self._episode_score)
-            self.log("episode_discounted_score", self._episode_discounted_score)
-            self.log("episode_value_estimate", self._episode_value_estimate)
-            self.log("episode_value_error", self._episode_value_error)
+            self.log("episode_discounted_score", self._episode_discounted_score.item())
+            self.log("episode_value_estimate", self._episode_value_estimate.item())
+            self.log("episode_value_error", self._episode_value_error.item())
             print('\rTime step {}\tScore: {:.2f}'.format(self._total_env_interactions, self._episode_score), end="")
             self._terminate_episode()
         else:
@@ -471,7 +471,7 @@ class Agent(object):
         self.log_hparams(self.hparams) # log available variables..
         self.log_text("env_name", self._env_name)
         self.log_text("experiment_time", current_time)
-        self.log_text("seed", self._seed)
+        self.log_text("seed", str(self._seed))
         self.train() # and test sometimes..
         self._logger.close()
         self.experiment_end()

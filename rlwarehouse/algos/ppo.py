@@ -51,7 +51,7 @@ class PPO(Agent):
         self._pi = policy_map[pi_net](**self.env_info).to(self._device)
         self._v = value_map[v_net](**self.env_info).to(self._device)
         # optimizers
-        self._construct_optimizers(pi_lr, v_lr)
+        self._construct_optimizers()
 
     @property
     def hparams(self):
@@ -150,20 +150,20 @@ class PPO(Agent):
                 th.nn.utils.clip_grad_norm_(self._v.parameters(), self._max_grad_norm)
                 self._v_optim.step() 
                 # useful extra info
-                approx_kl = (log_prob - cross_log_prob).mean().item()
+                approx_kl = (log_prob - cross_log_prob).mean()
                 clipped = th.logical_or(ratio.gt(1 + self._clip_ratio), ratio.lt(1 - self._clip_ratio))
-                clipfrac = th.as_tensor(clipped, dtype=th.float32).mean().item()
+                clipfrac = th.as_tensor(clipped, dtype=th.float32).mean()
                 #
-                self.log("pi_loss", pi_loss)
-                self.log("v_loss", v_loss)
-                self.log("approx_kl", approx_kl)
-                self.log("clipfrac", clipfrac)
-                self.log("cross_log_prob", cross_log_prob.mean())
+                self.log("pi_loss", pi_loss.item())
+                self.log("v_loss", v_loss.item())
+                self.log("approx_kl", approx_kl.item())
+                self.log("clipfrac", clipfrac.item())
+                self.log("cross_log_prob", cross_log_prob.mean().item())
 
-    def _construct_optimizers(self, pi_lr, v_lr):
+    def _construct_optimizers(self):
         """Initialize Adam optimizer."""
-        self._pi_optim = AdamW(self._pi.parameters(), lr=pi_lr)
-        self._v_optim = AdamW(self._v.parameters(), lr=v_lr)
+        self._pi_optim = AdamW(self._pi.parameters(), lr=self._pi_lr)
+        self._v_optim = AdamW(self._v.parameters(), lr=self._v_lr)
 
     def train_mode(self):
         self._v.train()

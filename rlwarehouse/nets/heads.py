@@ -14,7 +14,7 @@ class GaussianHead(nn.Module):
     def forward(self, x):
         mean = x[...,:self._n]
         logstd = x[...,self._n:]
-        std = th.nn.functional.softplus(logstd)
+        std = th.nn.functional.softplus(logstd, beta=1.0)
         dist = Normal(mean, std, validate_args=True)
         return dist
 
@@ -28,9 +28,9 @@ class SquashedGaussianHead(nn.Module):
         # bt means before tanh
         mean_bt = x[...,:self._n] 
         logstd_bt = x[...,self._n:] 
-        std_bt = th.nn.functional.softplus(logstd_bt) # this shit is stable 
+        std_bt = th.nn.functional.softplus(logstd_bt, beta=1.0) # this shit is stable 
         dist_bt = Normal(mean_bt, std_bt, validate_args=True)
-        transform = StableTanhTransform(cache_size=1)
+        transform = TanhTransform(cache_size=1)
         dist = TransformedDistribution(dist_bt, [transform], validate_args=True)
         return dist
 

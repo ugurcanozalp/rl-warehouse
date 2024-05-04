@@ -14,7 +14,8 @@ from ..nets import policy_map, qvalue_map
 
 class DROQ(Agent):
     
-    """Dropout Q Functions
+    """Dropout Q Functions 
+    https://arxiv.org/pdf/2110.02034
     """
     
     def __init__(self, 
@@ -65,7 +66,7 @@ class DROQ(Agent):
             self._qs.append(q)
             self._qs_target.append(q_target)
         # optimizers
-        self._construct_optimizers(pi_lr, q_lr)
+        self._construct_optimizers()
         
     @property
     def extra_fields(self):
@@ -159,7 +160,7 @@ class DROQ(Agent):
                 qvalue_loss += 0.5*th.nn.functional.mse_loss(qvalue_est_, qvalue) 
             qvalue_loss.backward()
             self._q_optim.step()
-            self.log("q_loss", qvalue_loss)
+            self.log("q_loss", qvalue_loss.item())
             for i in range(self._num_ensemble):
                 self._soft_update(self._qs[i], self._qs_target[i])
             # train policy one time
@@ -180,10 +181,10 @@ class DROQ(Agent):
                 pi_loss = -(q_mean_onpolicy + self._alpha * entropy).mean()
                 pi_loss.backward()
                 self._pi_optim.step()
-                self.log("pi_loss", pi_loss)
-                self.log("pi_entropy_avg", entropy.mean())
-                self.log("q_onpolicy_avg", q_mean_onpolicy.mean())
-                self.log("q_std_onpolicy_avg", q_std_onpolicy.mean())
+                self.log("pi_loss", pi_loss.item())
+                self.log("pi_entropy_avg", entropy.mean().item())
+                self.log("q_onpolicy_avg", q_mean_onpolicy.mean().item())
+                self.log("q_std_onpolicy_avg", q_std_onpolicy.mean().item())
                 # if autotune
                 if self._autotune:
                     entropy_ = entropy.mean().cpu().item()
@@ -208,9 +209,9 @@ class DROQ(Agent):
         }
         return param
     
-    def _construct_optimizers(self, pi_lr, q_lr):
+    def _construct_optimizers(self):
         """Initialize Adam optimizer."""
-        self._pi_optim = AdamW(self._pi.parameters(), lr=pi_lr)
+        self._pi_optim = AdamW(self._pi.parameters(), lr=self._pi_lr)
         self._q_optim = AdamW([{'params': q.parameters()} for q in self._qs], lr=self._q_lr)
 
     def train_mode(self):
