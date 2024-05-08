@@ -10,7 +10,7 @@ from torch.optim import Adam, AdamW, Optimizer
 from ..agent import Agent
 from ..nets import policy_map, probabilistic_qvalue_map
 
-# optbeta        ->        Ant = 1.0, Hopper = 0.75, Walker2d = 0.50, Humanoid = 0.75, HalfCheetah = 0.25
+# optbeta        ->        Ant = 0.75, Hopper = 0.60, Walker2d = 0.50, Humanoid = 1.0, HalfCheetah = 0.20
 # target entropy ->        Ant = -4 , Hopper = -1  , Walker2d = -3  , Humanoid = -2  , HalfCheetah = -3
 
 class DBAC(Agent):

@@ -7,6 +7,7 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt 
 from matplotlib import colormaps
+from scipy.ndimage import gaussian_filter1d
 
 @staticmethod
 def summarize(path: os.PathLike, result_path: os.PathLike, ncolsrows: Tuple[int], colormap: str = "Set1", smooth_window: int = 5):
@@ -62,6 +63,10 @@ def summarize(path: os.PathLike, result_path: os.PathLike, ncolsrows: Tuple[int]
             # moving average filtering for better visual
             eval_score_mean_ma = np.convolve(eval_score_mean, np.ones(smooth_window)/smooth_window, mode="same")
             eval_score_var_ma = np.convolve(eval_score_var, np.ones(smooth_window)/smooth_window, mode="same")
+
+            eval_score_mean_ma = gaussian_filter1d(eval_score_mean, smooth_window)
+            eval_score_var_ma = gaussian_filter1d(eval_score_var, smooth_window)
+
             eval_score_std_ma = np.sqrt(eval_score_var_ma)
             ax_score.plot(step, eval_score_mean_ma, color=COLORMAP(j), alpha=1.0, label=algo)
             ax_score.fill_between(step, 
@@ -76,6 +81,10 @@ def summarize(path: os.PathLike, result_path: os.PathLike, ncolsrows: Tuple[int]
                 # moving average filtering for better visual
                 eval_error_mean_ma = np.convolve(eval_error_mean, np.ones(smooth_window)/smooth_window, mode="same")
                 eval_error_var_ma = np.convolve(eval_error_var, np.ones(smooth_window)/smooth_window, mode="same")
+
+                eval_error_mean_ma = gaussian_filter1d(eval_error_mean, smooth_window)
+                eval_error_var_ma = gaussian_filter1d(eval_error_var, smooth_window)
+                
                 eval_error_std_ma = np.sqrt(eval_error_var_ma)
                 ax_error.plot(step, eval_error_mean_ma, color=COLORMAP(j), alpha=1.0, label=algo)
                 ax_error.fill_between(step, 
@@ -94,9 +103,9 @@ def summarize(path: os.PathLike, result_path: os.PathLike, ncolsrows: Tuple[int]
         ax_score.set_xlabel("# env interactions", fontsize=10)
         ax_error.set_ylabel("value error", fontsize=10)
         ax_error.set_xlabel("# env interactions", fontsize=10)
-        if i == 0: # only for first plot
-            ax_score.legend()
-            ax_error.legend()
+        #if i == 0: # only for first plot
+        ax_score.legend()
+        ax_error.legend()
         ax_score.grid()
         ax_error.grid()
     fig_score.tight_layout()

@@ -133,3 +133,5 @@ runs/*
 runs*/*
 logs/*
 logs*/*
+results/*
+results*/*

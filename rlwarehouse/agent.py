@@ -9,6 +9,7 @@ import numpy as np
 from datetime import datetime
 from typing import List, Tuple, Union, Dict, Any
 import pickle 
+import time
 
 import gymnasium as gym
 import torch as th
@@ -460,6 +461,7 @@ class Agent(object):
         print(f"Discounted Score: {discounted_score}")
 
     def experiment(self):
+        t0 = time.perf_counter()
         current_time = datetime.now().strftime("%b%d_%H-%M-%S")
         logname = os.path.join(self._env_name, self.algo_name+self._algo_tag, "seed"+str(self._seed)+current_time)
         self._logger = Logger(path=os.path.join("logs", logname))
@@ -475,6 +477,8 @@ class Agent(object):
         self.train() # and test sometimes..
         self._logger.close()
         self.experiment_end()
+        t1 = time.perf_counter()
+        print(f"Elapsed Time: {t1-t0}")
     
     @staticmethod
     def add_model_specific_args(parent_parser):
