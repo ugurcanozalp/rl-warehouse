@@ -379,9 +379,9 @@ class Agent(object):
         if is_episode_end: # end of the episode
             self._episode_value_error = self._episode_value_estimate - self._episode_discounted_score
             self.log("episode_score", self._episode_score)
-            self.log("episode_discounted_score", self._episode_discounted_score.item())
-            self.log("episode_value_estimate", self._episode_value_estimate.item())
-            self.log("episode_value_error", self._episode_value_error.item())
+            self.log("episode_discounted_score", float(self._episode_discounted_score))
+            self.log("episode_value_estimate", float(self._episode_value_estimate))
+            self.log("episode_value_error", float(self._episode_value_error))
             print('\rTime step {}\tScore: {:.2f}'.format(self._total_env_interactions, self._episode_score), end="")
             self._terminate_episode()
         else:

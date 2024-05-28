@@ -15,7 +15,7 @@ class GaussianHead(nn.Module):
         mean = x[...,:self._n]
         logstd = x[...,self._n:]
         std = th.nn.functional.softplus(logstd, beta=1.0)
-        dist = Normal(mean, std, validate_args=True)
+        dist = Normal(mean, std, validate_args=False)
         return dist
 
 
@@ -29,9 +29,9 @@ class SquashedGaussianHead(nn.Module):
         mean_bt = x[...,:self._n] 
         logstd_bt = x[...,self._n:] 
         std_bt = th.nn.functional.softplus(logstd_bt, beta=1.0) # this shit is stable 
-        dist_bt = Normal(mean_bt, std_bt, validate_args=True)
+        dist_bt = Normal(mean_bt, std_bt, validate_args=False)
         transform = TanhTransform(cache_size=1)
-        dist = TransformedDistribution(dist_bt, [transform], validate_args=True)
+        dist = TransformedDistribution(dist_bt, [transform], validate_args=False)
         return dist
 
 
@@ -43,7 +43,7 @@ class GammaHead(nn.Module):
     def forward(self, x):
         concentration = th.nn.functional.softplus(x[...,:self._n])
         rate = th.nn.functional.softplus(x[...,self._n:]) + 1e-6
-        dist = Gamma(concentration, rate, validate_args=True)
+        dist = Gamma(concentration, rate, validate_args=False)
         return dist
 
 
@@ -55,7 +55,7 @@ class CategoricalHead(nn.Module):
     def forward(self, x):
         logit = x
         probs = th.nn.functional.softmax(logit)
-        dist = Categorical(probs, validate_args=True)
+        dist = Categorical(probs, validate_args=False)
         return dist
 
 

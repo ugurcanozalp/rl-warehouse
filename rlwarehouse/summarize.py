@@ -7,17 +7,18 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt 
 from matplotlib import colormaps
-from scipy.ndimage import gaussian_filter1d
+import matplotlib.ticker as ticker
+from scipy.ndimage import gaussian_filter1d, uniform_filter1d
 
 @staticmethod
-def summarize(path: os.PathLike, result_path: os.PathLike, ncolsrows: Tuple[int], colormap: str = "Set1", smooth_window: int = 5):
+def summarize(path: os.PathLike, result_path: os.PathLike, ncolsrows: Tuple[int], colormap: str = "Set1", smooth_window: int = 3, figsize: Tuple[int] = (16, 9)):
     """Summarize everything about the results
     """
-    # ex: Agent.summarize("logs", "res", (6, 1), colormap="Set1", smooth_window=5)
+    # ex: Agent.summarize("logs", "res", (6, 1), colormap="Set1", smooth_window=3)
     COLORMAP = colormaps.get(colormap)
     ncol, nrow = ncolsrows
-    fig_score = plt.figure(figsize=(16, 9))
-    fig_error = plt.figure(figsize=(16, 9))
+    fig_score = plt.figure(figsize=figsize)
+    fig_error = plt.figure(figsize=figsize)
     num_envs = len(os.listdir(path))
     assert ncol*nrow == len(os.listdir(path)), "Number of environments do not match layout"
     env_dict = {}
@@ -29,10 +30,11 @@ def summarize(path: os.PathLike, result_path: os.PathLike, ncolsrows: Tuple[int]
         auc_scores, max_scores = np.zeros(num_envs), np.zeros(num_envs)
         algo_dict = {}
         env_path = os.path.join(path, env)
-        for j, algo in enumerate(os.listdir(env_path)):
+        for j, algo in enumerate(sorted(os.listdir(env_path))):
+            algo_for_legend = "$"+algo.replace("_", "\\:").replace("@", "\\")+"$"
             algo_path = os.path.join(env_path, algo)
             results = {}
-            for k, trial in enumerate(os.listdir(algo_path)):
+            for k, trial in enumerate(sorted(os.listdir(algo_path))):
                 trial_dir = os.path.join(algo_path, trial)
                 with jsonlines.open(os.path.join(trial_dir, "data.jsonl"), "r") as f: # reads as str
                     #print(os.path.join(trial_dir, "data.jsonl"))
@@ -61,14 +63,12 @@ def summarize(path: os.PathLike, result_path: os.PathLike, ncolsrows: Tuple[int]
             eval_score_var = eval_score.var(axis=1) # var across trials
             eval_score_std = np.sqrt(eval_score_var)
             # moving average filtering for better visual
-            eval_score_mean_ma = np.convolve(eval_score_mean, np.ones(smooth_window)/smooth_window, mode="same")
-            eval_score_var_ma = np.convolve(eval_score_var, np.ones(smooth_window)/smooth_window, mode="same")
-
-            eval_score_mean_ma = gaussian_filter1d(eval_score_mean, smooth_window)
-            eval_score_var_ma = gaussian_filter1d(eval_score_var, smooth_window)
-
+            #eval_score_mean_ma = np.convolve(eval_score_mean, np.ones(smooth_window)/smooth_window, mode="same")
+            #eval_score_var_ma = np.convolve(eval_score_var, np.ones(smooth_window)/smooth_window, mode="same")
+            eval_score_mean_ma = uniform_filter1d(eval_score_mean, smooth_window)
+            eval_score_var_ma = uniform_filter1d(eval_score_var, smooth_window)
             eval_score_std_ma = np.sqrt(eval_score_var_ma)
-            ax_score.plot(step, eval_score_mean_ma, color=COLORMAP(j), alpha=1.0, label=algo)
+            ax_score.plot(step, eval_score_mean_ma, color=COLORMAP(j), alpha=1.0, label=algo_for_legend)
             ax_score.fill_between(step, 
                 eval_score_mean_ma - eval_score_std_ma,
                 eval_score_mean_ma + eval_score_std_ma,
@@ -79,14 +79,12 @@ def summarize(path: os.PathLike, result_path: os.PathLike, ncolsrows: Tuple[int]
                 eval_error_var = eval_error.var(axis=1) # var across trials
                 eval_error_std = np.sqrt(eval_error_var)
                 # moving average filtering for better visual
-                eval_error_mean_ma = np.convolve(eval_error_mean, np.ones(smooth_window)/smooth_window, mode="same")
-                eval_error_var_ma = np.convolve(eval_error_var, np.ones(smooth_window)/smooth_window, mode="same")
-
-                eval_error_mean_ma = gaussian_filter1d(eval_error_mean, smooth_window)
-                eval_error_var_ma = gaussian_filter1d(eval_error_var, smooth_window)
-                
+                #eval_error_mean_ma = np.convolve(eval_error_mean, np.ones(smooth_window)/smooth_window, mode="same")
+                #eval_error_var_ma = np.convolve(eval_error_var, np.ones(smooth_window)/smooth_window, mode="same")
+                eval_error_mean_ma = uniform_filter1d(eval_error_mean, smooth_window)
+                eval_error_var_ma = uniform_filter1d(eval_error_var, smooth_window)
                 eval_error_std_ma = np.sqrt(eval_error_var_ma)
-                ax_error.plot(step, eval_error_mean_ma, color=COLORMAP(j), alpha=1.0, label=algo)
+                ax_error.plot(step, eval_error_mean_ma, color=COLORMAP(j), alpha=1.0, label=algo_for_legend)
                 ax_error.fill_between(step, 
                     eval_error_mean_ma - eval_error_std_ma,
                     eval_error_mean_ma + eval_error_std_ma,
@@ -108,6 +106,8 @@ def summarize(path: os.PathLike, result_path: os.PathLike, ncolsrows: Tuple[int]
         ax_error.legend()
         ax_score.grid()
         ax_error.grid()
+        ax_score.xaxis.set_major_formatter(ticker.EngFormatter()) 
+        ax_error.xaxis.set_major_formatter(ticker.EngFormatter()) 
     fig_score.tight_layout()
     fig_error.tight_layout()
     if not os.path.isdir(result_path):

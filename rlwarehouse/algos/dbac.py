@@ -10,8 +10,8 @@ from torch.optim import Adam, AdamW, Optimizer
 from ..agent import Agent
 from ..nets import policy_map, probabilistic_qvalue_map
 
-# optbeta        ->        Ant = 0.75, Hopper = 0.60, Walker2d = 0.50, Humanoid = 1.0, HalfCheetah = 0.20
-# target entropy ->        Ant = -4 , Hopper = -1  , Walker2d = -3  , Humanoid = -2  , HalfCheetah = -3
+# optbeta        ->        Ant = 0.5, Hopper = 0.60, Walker2d = 0.50, Humanoid = 1.0, HalfCheetah = 0.10, InvertedDoublePendulum = 0.20
+# target entropy ->        Ant = -4 , Hopper = -1  , Walker2d = -3  , Humanoid = -8  , HalfCheetah = -6, InvertedDoublePendulum = -1
 
 class DBAC(Agent):
     
@@ -69,7 +69,7 @@ class DBAC(Agent):
 
     @property
     def derived_fields(self):
-        """There is no derived field of MAC algorithm. 
+        """There is no derived field of DBAC algorithm. 
         """
         return ()
     
@@ -185,6 +185,7 @@ class DBAC(Agent):
             "dropout": self._dropout, 
             "tau": self._tau, 
             "batch_per_step": self._batch_per_step, 
+            "policy_delay": self._policy_delay, 
             "batch_size": self._batch_size, 
             "q_lr": self._q_lr, 
             "pi_lr": self._pi_lr, 
@@ -233,7 +234,6 @@ class DBAC(Agent):
         parser.add_argument("--tau", type=float, default=0.005)
         parser.add_argument("--batch_per_step", type=int, default=1)
         parser.add_argument("--policy_delay", type=int, default=1)
-        parser.add_argument("--target_update_interval", type=int, default=1)
         parser.add_argument("--pi_lr", type=float, default=3e-4)
         parser.add_argument("--q_lr", type=float, default=1e-3)
         parser.add_argument("--batch_size", type=int, default=256)

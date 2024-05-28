@@ -6,6 +6,7 @@ from .probabilistic_qvalue import ContinuousMLPStochasticQValue
 from .probabilistic_value import ContinuousMLPStochasticValue
 from .model import ContinuousMLPModel
 from .reward import ContinuousMLPReward
+from .probabilistic_reward import ContinuousMLPStochasticReward
 
 policy_map = {
     "continuous_mlp2": ContinuousMLPPolicy
@@ -29,4 +30,8 @@ model_map = {
 
 reward_map = {
     "continuous_mlp2": ContinuousMLPReward
+}
+
+probabilistic_reward_map = {
+    "continuous_mlp2": ContinuousMLPStochasticReward
 }

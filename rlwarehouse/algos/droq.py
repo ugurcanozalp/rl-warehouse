@@ -161,8 +161,8 @@ class DROQ(Agent):
             qvalue_loss.backward()
             self._q_optim.step()
             self.log("q_loss", qvalue_loss.item())
-            for i in range(self._num_ensemble):
-                self._soft_update(self._qs[i], self._qs_target[i])
+            for k in range(self._num_ensemble):
+                self._soft_update(self._qs[k], self._qs_target[k])
             # train policy one time
             if (i+1) % self._policy_delay == 0:
                 self._pi_optim.zero_grad()
