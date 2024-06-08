@@ -11,7 +11,7 @@ import matplotlib.ticker as ticker
 from scipy.ndimage import gaussian_filter1d, uniform_filter1d
 
 @staticmethod
-def summarize(path: os.PathLike, result_path: os.PathLike, ncolsrows: Tuple[int], colormap: str = "Set1", smooth_window: int = 3, figsize: Tuple[int] = (16, 9)):
+def summarize(path: os.PathLike, result_path: os.PathLike, ncolsrows: Tuple[int], colormap: str = "Set1", smooth_window: int = 5, figsize: Tuple[int] = (16, 9)):
     """Summarize everything about the results
     """
     # ex: Agent.summarize("logs", "res", (6, 1), colormap="Set1", smooth_window=3)
@@ -102,8 +102,8 @@ def summarize(path: os.PathLike, result_path: os.PathLike, ncolsrows: Tuple[int]
         ax_error.set_ylabel("value error", fontsize=10)
         ax_error.set_xlabel("# env interactions", fontsize=10)
         #if i == 0: # only for first plot
-        ax_score.legend()
-        ax_error.legend()
+        ax_score.legend(loc="upper left")
+        ax_error.legend(loc="upper left")
         ax_score.grid()
         ax_error.grid()
         ax_score.xaxis.set_major_formatter(ticker.EngFormatter()) 

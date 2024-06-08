@@ -1,9 +1,10 @@
 
 from .policy import ContinuousMLPPolicy
 from .value import ContinuousMLPValue
+from .probabilistic_value import ContinuousMLPStochasticValue
 from .qvalue import ContinuousMLPQValue
 from .probabilistic_qvalue import ContinuousMLPStochasticQValue
-from .probabilistic_value import ContinuousMLPStochasticValue
+from .quantile_qvalue import ContinuousMLPQuantileQValue
 from .model import ContinuousMLPModel
 from .reward import ContinuousMLPReward
 from .probabilistic_reward import ContinuousMLPStochasticReward
@@ -16,12 +17,20 @@ value_map = {
     "continuous_mlp2": ContinuousMLPValue
 }
 
+probabilistic_value_map = {
+    "continuous_mlp2": ContinuousMLPStochasticValue
+}
+
 qvalue_map = {
     "continuous_mlp2": ContinuousMLPQValue
 }
 
 probabilistic_qvalue_map = {
     "continuous_mlp2": ContinuousMLPStochasticQValue
+}
+
+quantile_qvalue_map = {
+    "continuous_mlp2": ContinuousMLPQuantileQValue
 }
 
 model_map = {

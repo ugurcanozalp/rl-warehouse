@@ -4,3 +4,4 @@ from .sac import SAC
 from .dbac import DBAC
 from .droq import DROQ
 from .mddp import MDDP
+from .tqc import TQC
