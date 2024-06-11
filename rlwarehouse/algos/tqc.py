@@ -146,12 +146,12 @@ class TQC(Agent):
                 if self._pi.independent_actions: 
                     next_entropy = next_entropy.sum(dim=-1, keepdim=True)
                 next_q_values_list = []
-                for m in random.sample(range(self._num_ensemble), 2):
+                for m in range(self._num_ensemble):
                     qtarget = self._qs_target[m]
                     next_qvalue_ = qtarget(next_observation, next_action)
                     next_q_values_list.append(next_qvalue_)
                 next_q_values = th.stack(next_q_values_list, dim=-2) # batch x num_nets x num_quants 
-                next_q_values_sorted, _ = next_q_values.flatten(start_dim=1).sort() # batch x num_nets * num_quants 
+                next_q_values_sorted, _ = next_q_values.flatten(start_dim=1).sort(dim=-1) # batch x num_nets * num_quants 
                 next_q_values_truncated = next_q_values_sorted[:, :self._total_quantiles-self._total_drop_quantiles]
                 next_qvalue_target = next_q_values_truncated + self._alpha * next_entropy
                 qvalue = reward.unsqueeze(-1) + self._gamma * next_qvalue_target * done.logical_not().unsqueeze(-1) # batch x rem_quants
