@@ -102,8 +102,8 @@ def summarize(path: os.PathLike, result_path: os.PathLike, ncolsrows: Tuple[int]
         ax_error.set_ylabel("value error", fontsize=10)
         ax_error.set_xlabel("# env interactions", fontsize=10)
         #if i == 0: # only for first plot
-        ax_score.legend(loc="upper left")
-        ax_error.legend(loc="upper left")
+        ax_score.legend(loc="upper left", framealpha=0.0, prop={'size': 8})
+        ax_error.legend(loc="upper left", framealpha=0.0, prop={'size': 8})
         ax_score.grid()
         ax_error.grid()
         ax_score.xaxis.set_major_formatter(ticker.EngFormatter()) 
