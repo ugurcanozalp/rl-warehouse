@@ -1,0 +1,334 @@
+
+from typing import Iterator, List, Tuple, Callable, Any
+from argparse import ArgumentParser
+
+import math
+import numpy as np
+import torch as th
+from torch.optim import Adam, AdamW, Optimizer
+
+from ..agent import Agent
+from ..nets import policy_map, quantile_qvalue_map
+
+
+class ExpWeights(object):
+    
+    def __init__(self, 
+                 arms: List = [-1, 0, 1],
+                 lr: float = 0.2,
+                 window: int = 5, 
+                 decay: float = 0.9,
+                 init: float = 0.0,
+                 use_std: bool = True) -> None:
+        """Initialize bandit.
+
+        Args:
+            arms (List, optional): Arm values. Defaults to [-1, 0, 1].
+            lr (float, optional): Learning rate. Defaults to 0.2.
+            window (int, optional): Window to normalize over. Defaults to 5.
+            decay (float, optional): Decay rate for probability. Defaults to 0.9.
+            init (float, optional): Weight initialization. Defaults to 0.0.
+            use_std (bool, optional): Use std to normalize feedback. Defaults to True.
+        """
+        
+        self.arms = arms
+        self.w = {i:init for i in range(len(self.arms))}
+        self.arm = 0
+        self.value = self.arms[self.arm]
+        self.error_buffer = []
+        self.window = window
+        self.lr = lr
+        self.decay = decay
+        self.use_std = use_std
+        
+        self.choices = [self.arm]
+        self.data = []
+        
+    def sample(self) -> float:
+        """Sample from distribution. 
+
+        Returns:
+            float: The value of the sampled arm.
+        """
+        p = [np.exp(x) for x in self.w.values()]
+        p /= np.sum(p) # normalize to make it a distribution
+        self.arm = np.random.choice(range(0,len(p)), p=p)
+
+        self.value = self.arms[self.arm]
+        self.choices.append(self.arm)
+        
+        return self.value
+
+    def get_probs(self) -> List:
+        """Get arm probabilities. 
+
+        Returns:
+            List: probabilities for each arm. 
+        """
+        p = [np.exp(x) for x in self.w.values()]
+        p /= np.sum(p) # normalize to make it a distribution
+        return p
+
+        
+    def update_dists(self, feedback: float, norm: float = 1.0) -> None:
+        """Update distribution over arms. 
+
+        Args:
+            feedback (float): Feedback signal. 
+            norm (float, optional): Normalization factor. Defaults to 1.0.
+        """
+
+        # Since this is non-stationary, subtract mean of previous self.window errors. 
+        self.error_buffer.append(feedback)
+        self.error_buffer = self.error_buffer[-self.window:]
+        
+        # normalize
+        feedback -= np.mean(self.error_buffer)
+        if self.use_std and len(self.error_buffer) > 1: norm = np.std(self.error_buffer); 
+        feedback /= norm 
+        
+        # update arm weights
+        self.w[self.arm] *= self.decay
+        self.w[self.arm] += self.lr * (feedback/max(np.exp(self.w[self.arm]), 0.0001))
+        
+        self.data.append(feedback)
+
+
+class TOP(Agent):
+    
+    def __init__(self, 
+        pi_net: str = "continuous_mlp2", 
+        q_net: str = "continuous_mlp2",
+        gamma: float = 0.99,
+        explore_noise: float = 0.1, 
+        num_quantiles: int = 50, 
+        tau: float = 0.005, 
+        batch_per_step: int = 1, 
+        policy_delay: int = 1,
+        pi_lr: float = 3e-4,
+        q_lr: float = 1e-3, 
+        bandit_lr: float = 0.1, 
+        batch_size: int = 256, 
+        **memory_kwargs
+    ):
+        super().__init__(**memory_kwargs)
+        # hyperparameters
+        self._gamma = gamma
+        self._explore_noise = explore_noise
+        self._num_quantiles = num_quantiles
+        self._tau = tau
+        self._batch_per_step = batch_per_step
+        self._policy_delay = policy_delay
+        self._batch_size = batch_size 
+        self._q_lr = q_lr
+        self._pi_lr = pi_lr
+        self._bandit_lr = bandit_lr
+        # bandit 
+        self.bandit = ExpWeights(arms=[-1, 0], lr=bandit_lr, init=0.0, use_std=True) 
+        # 
+        self._prev_episode_score = None
+        # networks
+        self._pi = policy_map[pi_net](**self.env_info).to(self._device)
+        self._q1 = quantile_qvalue_map[q_net](num_quantiles=self._num_quantiles, **self.env_info).to(self._device)
+        self._q2 = quantile_qvalue_map[q_net](num_quantiles=self._num_quantiles, **self.env_info).to(self._device)
+        self._q1_target = quantile_qvalue_map[q_net](num_quantiles=self._num_quantiles, **self.env_info).eval().to(self._device)
+        self._q2_target = quantile_qvalue_map[q_net](num_quantiles=self._num_quantiles, **self.env_info).eval().to(self._device)
+        self._hard_update(self._q1, self._q1_target)
+        self._hard_update(self._q2, self._q2_target)
+        # no grad for target networks
+        for param in self._q1_target.parameters():
+            param.requires_grad = False
+        for param in self._q2_target.parameters():
+            param.requires_grad = False
+        # optimizers
+        self._construct_optimizers()
+        
+    @property
+    def hparams(self):
+        param = {
+            "gamma": self._gamma, 
+            "explore_noise": self._explore_noise, 
+            "tau": self._tau, 
+            "batch_per_step": self._batch_per_step, 
+            "batch_size": self._batch_size, 
+            "q_lr": self._q_lr, 
+            "pi_lr": self._pi_lr, 
+            "bandir_lr": self._bandit_lr, 
+        }
+        return param
+    
+    @property
+    def extra_fields(self):
+        """TOP algo do not need extra fields
+        """
+        return ()
+
+    @property
+    def derived_fields(self):
+        """There is no derived field for TOP algorithm.
+        """
+        return ()
+
+    def reset(self):
+        if self._prev_episode_score is not None:
+            self.bandit.update_dists(self._episode_score - self._prev_episode_score)
+        self._prev_episode_score = self._episode_score
+
+    def step_torch(self, observation: th.Tensor, exploit: bool = False):
+        action = self._pi(observation)
+        if not exploit:
+            action += (th.rand_like(action)-0.5) * self._explore_noise
+        return action, ()
+
+    @th.no_grad()
+    def step(self, observation: np.ndarray, exploit: bool = False):
+        if self._total_env_interactions < self._start_steps:
+            action = None
+        else:
+            observation_ = th.from_numpy(observation).unsqueeze(0).float().to(self.device)
+            action_, _ = self.step_torch(observation_, exploit=exploit)
+            action = action_.squeeze(0).cpu().numpy()
+        return action, ()
+
+    def value_torch(self, observation: th.Tensor):
+        action = self._pi(observation) 
+        q1val = self._q1(observation, action).mean(dim=-1) # batch, double mean due to quantiles
+        q2val = self._q2(observation, action).mean(dim=-1) # batch, double mean due to quantiles
+        value = 0.5*(q1val + q2val) 
+        return value
+    
+    @th.no_grad()
+    def value(self, observation: np.ndarray):
+        observation_ = th.from_numpy(observation).unsqueeze(0).float().to(self.device)
+        value_ = self.value_torch(observation_)
+        value = value_.squeeze(0).cpu().numpy()
+        return value
+
+    def reset(self):
+        pass
+
+    def _soft_update(self, local_model, target_model):
+        for target_param, local_param in zip(target_model.parameters(), local_model.parameters()):
+            target_param.data.copy_(self._tau*local_param.data + (1.0-self._tau)*target_param.data)
+
+    def _hard_update(self, local_model, target_model):
+        for target_param, local_param in zip(target_model.parameters(), local_model.parameters()):
+            target_param.data.copy_(local_param.data)
+            
+    def learn_on_step(self):
+        for i in range(self._batch_per_step):
+            beta = self.bandit.sample() # sample optimism
+            self._total_grad_steps += 1
+            observation, action, reward, next_observation, done, truncated = self.memory.sample(self._batch_size)
+            with th.no_grad():
+                next_action = self._pi(next_observation)
+                next_action += (th.rand_like(next_action)-0.5) * self._explore_noise
+                next_qvalue1_qtls = self._q1_target(next_observation, next_action) # batch x num_quants 
+                next_qvalue2_qtls = self._q2_target(next_observation, next_action) # batch x num_quants 
+                next_qvalue_qtls_mu = 0.5*(next_qvalue1_qtls + next_qvalue2_qtls) # batch x num_quants, epistemic mean
+                next_qvalue_qtls_std = th.sqrt(1e-6+(next_qvalue1_qtls-next_qvalue_qtls_mu).square() + (next_qvalue2_qtls-next_qvalue_qtls_mu).square()) # batch x num_quants, epistemic mean
+                next_qvalue_qtls_target = next_qvalue_qtls_mu + beta * next_qvalue_qtls_std 
+                target_qvalue_qtls = reward.unsqueeze(-1) + self._gamma * next_qvalue_qtls_target * done.logical_not().unsqueeze(-1)
+            # update critics
+            self._q_optim.zero_grad()
+            qvalue1_est_qtls = self._q1(observation, action)
+            qvalue1_loss = self.quantile_huber_loss(qvalue1_est_qtls, target_qvalue_qtls) 
+            qvalue2_est_qtls = self._q2(observation, action)
+            qvalue2_loss = self.quantile_huber_loss(qvalue2_est_qtls, target_qvalue_qtls) 
+            qvalue_loss = qvalue1_loss + qvalue2_loss
+            qvalue_loss.backward()
+            self._q_optim.step()
+            self._soft_update(self._q1, self._q1_target)
+            self._soft_update(self._q2, self._q2_target)
+            wd = self.compute_wd_quantile(qvalue1_est_qtls, qvalue2_est_qtls).mean() # average wassertein-distance between q1 and q2
+            self.log("q_loss", qvalue_loss.item())
+            self.log("q1_loss", qvalue1_loss.item())
+            self.log("q2_loss", qvalue2_loss.item())
+            self.log("wd", wd.item())
+            self.log("beta", beta)
+            # train policy one time
+            if (i+1) % self._policy_delay == 0:
+                self._pi_optim.zero_grad()
+                action_imaginary = self._pi(observation)
+                q1_onpolicy_qtls = self._q1(observation, action_imaginary)
+                q2_onpolicy_qtls = self._q2(observation, action_imaginary)
+                q_onpolicy_qtls_mu = 0.5*(q1_onpolicy_qtls + q2_onpolicy_qtls) # batch x num_quants, epistemic mean
+                q_onpolicy_qtls_std = th.sqrt(1e-6+(q1_onpolicy_qtls-q_onpolicy_qtls_mu).square() + (q2_onpolicy_qtls-q_onpolicy_qtls_mu).square()) # batch x num_quants, epistemic mean
+                q_onpolicy_qtls_obj = q_onpolicy_qtls_mu + beta * q_onpolicy_qtls_std 
+                q_onpolicy = q_onpolicy_qtls_obj.mean(dim=-1)
+                pi_loss = -q_onpolicy.mean()
+                pi_loss.backward()
+                self._pi_optim.step()
+                self.log("pi_loss", pi_loss.item())
+
+    def _construct_optimizers(self):
+        """Initialize Adam optimizer."""
+        self._pi_optim = AdamW(self._pi.parameters(), lr=self._pi_lr)
+        # q_optim = Adam(self._q1.parameters(), lr=self._q_lr)
+        self._q_optim = AdamW(
+            [{'params': self._q1.parameters()}, {'params': self._q2.parameters()}], 
+            lr=self._q_lr
+        )
+
+    def train_mode(self):
+        self._q1.train()
+        self._q2.train()
+        self._pi.train()
+
+    def eval_mode(self):
+        self._q1.eval()
+        self._q2.eval()
+        self._pi.eval()
+
+    def compute_function(self,
+        observation, 
+        action, 
+        reward, 
+        next_observation, 
+        done, 
+        truncated, 
+    ):
+        return ()
+
+    def experiment_end(self): 
+        pass
+
+    @staticmethod
+    def quantile_huber_loss(quantiles, samples):
+        # samples: # batch x num_quant_sample
+        # quantiles: # batch x num_quant
+        pairwise_delta = samples[:, None, :] - quantiles[:, :, None]  # batch x num_quant x num_quant_sample 
+        abs_pairwise_delta = th.abs(pairwise_delta)
+        huber_loss = th.where(abs_pairwise_delta > 1,
+                                abs_pairwise_delta - 0.5,
+                                pairwise_delta ** 2 * 0.5)
+        n_quantiles = quantiles.shape[-2]
+        tau = th.arange(n_quantiles, device=pairwise_delta.device).float() / n_quantiles + 1 / 2 / n_quantiles
+        loss = (th.abs(tau[None, :, None] - (pairwise_delta < 0).float()) * huber_loss).mean()
+        return loss
+
+    @staticmethod
+    def compute_wd_quantile(q1_qtls, q2_qtls, wd_gamma = 1.0):
+        wd = th.pow(th.sum(th.pow(th.abs(q1_qtls - q2_qtls), wd_gamma)), 1 / wd_gamma)
+        wd = wd.mean(dim=-1) # do not mean by batch for now. 
+        return wd
+
+    @staticmethod
+    def add_model_specific_args(parent_parser):
+        parser = ArgumentParser(parents=[parent_parser], add_help=False)
+        parser = Agent.add_model_specific_args(parser)
+        parser.add_argument("--pi_net", type=str, default="continuous_mlp2")
+        parser.add_argument("--q_net", type=str, default="continuous_mlp2")
+        parser.add_argument("--gamma", type=float, default=0.99)
+        parser.add_argument("--explore_noise", type=float, default=0.1)
+        parser.add_argument("--num_quantiles", type=int, default=50)
+        parser.add_argument("--tau", type=float, default=0.005)
+        parser.add_argument("--batch_per_step", type=int, default=1)
+        parser.add_argument("--target_update_interval", type=int, default=1)
+        parser.add_argument("--pi_lr", type=float, default=3e-4)
+        parser.add_argument("--q_lr", type=float, default=1e-3)
+        parser.add_argument("--batch_size", type=int, default=256)
+        return parser
+
+if __name__=="__main__":
+    pass

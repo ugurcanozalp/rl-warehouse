@@ -9,7 +9,7 @@ import torch as th
 from torch.optim import Adam, AdamW, Optimizer
 
 from ..agent import Agent
-from ..nets import policy_map, qvalue_map
+from ..nets import probabilistic_policy_map, qvalue_map
 
 
 class DROQ(Agent):
@@ -53,7 +53,7 @@ class DROQ(Agent):
         self._q_lr = q_lr
         self._pi_lr = pi_lr
         # networks
-        self._pi = policy_map[pi_net](**self.env_info).to(self._device)
+        self._pi = probabilistic_policy_map[pi_net](**self.env_info).to(self._device)
         self._qs = []
         self._qs_target = []
         for _ in range(self._num_ensemble):

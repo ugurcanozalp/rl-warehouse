@@ -8,7 +8,7 @@ import torch as th
 from torch.optim import Adam, AdamW, Optimizer
 
 from ..agent import Agent
-from ..nets import policy_map, probabilistic_qvalue_map
+from ..nets import probabilistic_policy_map, probabilistic_qvalue_map
 
 # optbeta        ->        Ant = 0.5, Hopper = 0.60, Walker2d = 0.50, Humanoid = 1.0, HalfCheetah = 0.10, InvertedDoublePendulum = 0.20
 # target entropy ->        Ant = -4 , Hopper = -1  , Walker2d = -3  , Humanoid = -8  , HalfCheetah = -6, InvertedDoublePendulum = -1
@@ -50,7 +50,7 @@ class DBAC(Agent):
         self._q_lr = q_lr
         self._pi_lr = pi_lr
         # networks
-        self._pi = policy_map[pi_net](**self.env_info, dropout=self._dropout).to(self._device)
+        self._pi = probabilistic_policy_map[pi_net](**self.env_info, dropout=self._dropout).to(self._device)
         self._q = probabilistic_qvalue_map[q_net](dropout=self._dropout, **self.env_info).to(self._device)
         self._q_target = probabilistic_qvalue_map[q_net](dropout=self._dropout, **self.env_info).to(self._device)
         #

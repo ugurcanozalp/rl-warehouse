@@ -7,7 +7,7 @@ import torch as th
 from torch.optim import Adam, AdamW, Optimizer
 
 from ..agent import Agent
-from ..nets import policy_map, value_map
+from ..nets import probabilistic_policy_map, value_map
 
 
 # https://pytorch-lightning.readthedocs.io/en/stable/notebooks/lightning_examples/reinforce-learning-DQN.html
@@ -48,7 +48,7 @@ class PPO(Agent):
         self._batch_per_rollout = self._steps_per_rollout // batch_size 
         self._epochs_per_rollout = epochs_per_rollout
         # networks
-        self._pi = policy_map[pi_net](**self.env_info).to(self._device)
+        self._pi = probabilistic_policy_map[pi_net](**self.env_info).to(self._device)
         self._v = value_map[v_net](**self.env_info).to(self._device)
         # optimizers
         self._construct_optimizers()

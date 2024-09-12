@@ -189,8 +189,8 @@ class Agent(object):
         return self._total_env_interactions + t + 1 - self.memory._not_computed
 
     def _terminate_episode(self):
-        self._observation, _ = self._env.reset()
         self.reset()
+        self._observation, _ = self._env.reset()
         self._episode_score = 0
         self._episode_discounted_score = 0
         self._episode_value_estimate = 0

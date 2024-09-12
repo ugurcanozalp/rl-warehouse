@@ -8,7 +8,7 @@ import torch as th
 from torch.optim import Adam, AdamW, Optimizer
 
 from ..agent import Agent
-from ..nets import policy_map, qvalue_map
+from ..nets import probabilistic_policy_map, qvalue_map
 
 
 class SAC(Agent):
@@ -41,7 +41,7 @@ class SAC(Agent):
         self._q_lr = q_lr
         self._pi_lr = pi_lr
         # networks
-        self._pi = policy_map[pi_net](**self.env_info).to(self._device)
+        self._pi = probabilistic_policy_map[pi_net](**self.env_info).to(self._device)
         self._q1 = qvalue_map[q_net](**self.env_info).to(self._device)
         self._q2 = qvalue_map[q_net](**self.env_info).to(self._device)
         self._q1_target = qvalue_map[q_net](**self.env_info).eval().to(self._device)
