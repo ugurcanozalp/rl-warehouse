@@ -11,21 +11,23 @@ from ..agent import Agent
 from ..nets import policy_map, quantile_qvalue_map
 
 
+DEFAULT_ARMS = [-1, -0.75, -0.5, -0.25, 0, 0.25, 0.5, 0.75, 1]
+
 class ExpWeights(object):
     
     def __init__(self, 
-                 arms: List = [-1, 0, 1],
+                 arms: List = DEFAULT_ARMS,
                  lr: float = 0.2,
-                 window: int = 5, 
+                 window: int = 10, 
                  decay: float = 0.9,
                  init: float = 0.0,
                  use_std: bool = True) -> None:
         """Initialize bandit.
 
         Args:
-            arms (List, optional): Arm values. Defaults to [-1, 0, 1].
+            arms (List, optional): Arm values. Defaults to [-1, -0.75, -0.5, -0.25, 0, 0.25, 0.5, 0.75, 1].
             lr (float, optional): Learning rate. Defaults to 0.2.
-            window (int, optional): Window to normalize over. Defaults to 5.
+            window (int, optional): Window to normalize over. Defaults to 10.
             decay (float, optional): Decay rate for probability. Defaults to 0.9.
             init (float, optional): Weight initialization. Defaults to 0.0.
             use_std (bool, optional): Use std to normalize feedback. Defaults to True.
@@ -101,7 +103,10 @@ class TOP(Agent):
         q_net: str = "continuous_mlp2",
         gamma: float = 0.99,
         explore_noise: float = 0.1, 
-        num_quantiles: int = 50, 
+        target_explore_noise: float = 0.2, 
+        action_clip: float = 1.0, 
+        target_action_clip: float = 0.5, 
+        num_quantiles: int = 100, 
         tau: float = 0.005, 
         batch_per_step: int = 1, 
         policy_delay: int = 1,
@@ -115,6 +120,9 @@ class TOP(Agent):
         # hyperparameters
         self._gamma = gamma
         self._explore_noise = explore_noise
+        self._target_explore_noise = target_explore_noise
+        self._action_clip = action_clip
+        self._target_action_clip = target_action_clip
         self._num_quantiles = num_quantiles
         self._tau = tau
         self._batch_per_step = batch_per_step
@@ -125,6 +133,8 @@ class TOP(Agent):
         self._bandit_lr = bandit_lr
         # bandit 
         self.bandit = ExpWeights(arms=[-1, 0], lr=bandit_lr, init=0.0, use_std=True) 
+        # optimism
+        self._beta = 0
         # 
         self._prev_episode_score = None
         # networks
@@ -169,15 +179,10 @@ class TOP(Agent):
         """
         return ()
 
-    def reset(self):
-        if self._prev_episode_score is not None:
-            self.bandit.update_dists(self._episode_score - self._prev_episode_score)
-        self._prev_episode_score = self._episode_score
-
     def step_torch(self, observation: th.Tensor, exploit: bool = False):
         action = self._pi(observation)
         if not exploit:
-            action += (th.rand_like(action)-0.5) * self._explore_noise
+            action += self._explore_noise * th.randn_like(action).clip(-self._action_clip, self._action_clip)
         return action, ()
 
     @th.no_grad()
@@ -205,7 +210,10 @@ class TOP(Agent):
         return value
 
     def reset(self):
-        pass
+        if self._prev_episode_score is not None:
+            self.bandit.update_dists(self._episode_score - self._prev_episode_score)
+        self._beta = self.bandit.sample() # sample optimism
+        self._prev_episode_score = self._episode_score
 
     def _soft_update(self, local_model, target_model):
         for target_param, local_param in zip(target_model.parameters(), local_model.parameters()):
@@ -217,17 +225,16 @@ class TOP(Agent):
             
     def learn_on_step(self):
         for i in range(self._batch_per_step):
-            beta = self.bandit.sample() # sample optimism
             self._total_grad_steps += 1
             observation, action, reward, next_observation, done, truncated = self.memory.sample(self._batch_size)
             with th.no_grad():
                 next_action = self._pi(next_observation)
-                next_action += (th.rand_like(next_action)-0.5) * self._explore_noise
+                next_action += self._target_explore_noise * th.randn_like(next_action).clip(-self._target_action_clip, self._target_action_clip)
                 next_qvalue1_qtls = self._q1_target(next_observation, next_action) # batch x num_quants 
                 next_qvalue2_qtls = self._q2_target(next_observation, next_action) # batch x num_quants 
                 next_qvalue_qtls_mu = 0.5*(next_qvalue1_qtls + next_qvalue2_qtls) # batch x num_quants, epistemic mean
-                next_qvalue_qtls_std = th.sqrt(1e-6+(next_qvalue1_qtls-next_qvalue_qtls_mu).square() + (next_qvalue2_qtls-next_qvalue_qtls_mu).square()) # batch x num_quants, epistemic mean
-                next_qvalue_qtls_target = next_qvalue_qtls_mu + beta * next_qvalue_qtls_std 
+                next_qvalue_qtls_std = th.sqrt(1e-5+(next_qvalue1_qtls-next_qvalue_qtls_mu).square() + (next_qvalue2_qtls-next_qvalue_qtls_mu).square()) # batch x num_quants, epistemic mean
+                next_qvalue_qtls_target = next_qvalue_qtls_mu + self._beta * next_qvalue_qtls_std 
                 target_qvalue_qtls = reward.unsqueeze(-1) + self._gamma * next_qvalue_qtls_target * done.logical_not().unsqueeze(-1)
             # update critics
             self._q_optim.zero_grad()
@@ -245,7 +252,7 @@ class TOP(Agent):
             self.log("q1_loss", qvalue1_loss.item())
             self.log("q2_loss", qvalue2_loss.item())
             self.log("wd", wd.item())
-            self.log("beta", beta)
+            self.log("beta", self._beta)
             # train policy one time
             if (i+1) % self._policy_delay == 0:
                 self._pi_optim.zero_grad()
@@ -253,8 +260,8 @@ class TOP(Agent):
                 q1_onpolicy_qtls = self._q1(observation, action_imaginary)
                 q2_onpolicy_qtls = self._q2(observation, action_imaginary)
                 q_onpolicy_qtls_mu = 0.5*(q1_onpolicy_qtls + q2_onpolicy_qtls) # batch x num_quants, epistemic mean
-                q_onpolicy_qtls_std = th.sqrt(1e-6+(q1_onpolicy_qtls-q_onpolicy_qtls_mu).square() + (q2_onpolicy_qtls-q_onpolicy_qtls_mu).square()) # batch x num_quants, epistemic mean
-                q_onpolicy_qtls_obj = q_onpolicy_qtls_mu + beta * q_onpolicy_qtls_std 
+                q_onpolicy_qtls_std = th.sqrt(1e-5+(q1_onpolicy_qtls-q_onpolicy_qtls_mu).square() + (q2_onpolicy_qtls-q_onpolicy_qtls_mu).square()) # batch x num_quants, epistemic mean
+                q_onpolicy_qtls_obj = q_onpolicy_qtls_mu + self._beta * q_onpolicy_qtls_std 
                 q_onpolicy = q_onpolicy_qtls_obj.mean(dim=-1)
                 pi_loss = -q_onpolicy.mean()
                 pi_loss.backward()
@@ -302,7 +309,7 @@ class TOP(Agent):
         huber_loss = th.where(abs_pairwise_delta > 1,
                                 abs_pairwise_delta - 0.5,
                                 pairwise_delta ** 2 * 0.5)
-        n_quantiles = quantiles.shape[-2]
+        n_quantiles = quantiles.shape[-1]
         tau = th.arange(n_quantiles, device=pairwise_delta.device).float() / n_quantiles + 1 / 2 / n_quantiles
         loss = (th.abs(tau[None, :, None] - (pairwise_delta < 0).float()) * huber_loss).mean()
         return loss
@@ -321,7 +328,10 @@ class TOP(Agent):
         parser.add_argument("--q_net", type=str, default="continuous_mlp2")
         parser.add_argument("--gamma", type=float, default=0.99)
         parser.add_argument("--explore_noise", type=float, default=0.1)
-        parser.add_argument("--num_quantiles", type=int, default=50)
+        parser.add_argument("--target_explore_noise", type=float, default=0.2)
+        parser.add_argument("--action_clip", type=float, default=1.0)
+        parser.add_argument("--target_action_clip", type=float, default=0.5)
+        parser.add_argument("--num_quantiles", type=int, default=100)
         parser.add_argument("--tau", type=float, default=0.005)
         parser.add_argument("--batch_per_step", type=int, default=1)
         parser.add_argument("--target_update_interval", type=int, default=1)

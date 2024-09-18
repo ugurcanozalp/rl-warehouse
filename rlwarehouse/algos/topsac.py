@@ -8,23 +8,110 @@ import torch as th
 from torch.optim import Adam, AdamW, Optimizer
 
 from ..agent import Agent
-from ..nets import probabilistic_policy_map, qvalue_map
+from ..nets import probabilistic_policy_map, quantile_qvalue_map
 
 
-class SAC(Agent):
+DEFAULT_ARMS = [-1, -0.5, 0, 0.5, 1]
+
+class ExpWeights(object):
+    
+    def __init__(self, 
+                 arms: List = DEFAULT_ARMS,
+                 lr: float = 0.2,
+                 window: int = 10, 
+                 decay: float = 0.9,
+                 init: float = 0.0,
+                 use_std: bool = True) -> None:
+        """Initialize bandit.
+
+        Args:
+            arms (List, optional): Arm values. Defaults to [-1, -0.5, 0, 0.5, 1].
+            lr (float, optional): Learning rate. Defaults to 0.2.
+            window (int, optional): Window to normalize over. Defaults to 10.
+            decay (float, optional): Decay rate for probability. Defaults to 0.9.
+            init (float, optional): Weight initialization. Defaults to 0.0.
+            use_std (bool, optional): Use std to normalize feedback. Defaults to True.
+        """
+        
+        self.arms = arms
+        self.w = {i:init for i in range(len(self.arms))}
+        self.arm = 0
+        self.value = self.arms[self.arm]
+        self.error_buffer = []
+        self.window = window
+        self.lr = lr
+        self.decay = decay
+        self.use_std = use_std
+        
+        self.choices = [self.arm]
+        self.data = []
+        
+    def sample(self) -> float:
+        """Sample from distribution. 
+
+        Returns:
+            float: The value of the sampled arm.
+        """
+        p = [np.exp(x) for x in self.w.values()]
+        p /= np.sum(p) # normalize to make it a distribution
+        self.arm = np.random.choice(range(0,len(p)), p=p)
+
+        self.value = self.arms[self.arm]
+        self.choices.append(self.arm)
+        
+        return self.value
+
+    def get_probs(self) -> List:
+        """Get arm probabilities. 
+
+        Returns:
+            List: probabilities for each arm. 
+        """
+        p = [np.exp(x) for x in self.w.values()]
+        p /= np.sum(p) # normalize to make it a distribution
+        return p
+
+        
+    def update_dists(self, feedback: float, norm: float = 1.0) -> None:
+        """Update distribution over arms. 
+
+        Args:
+            feedback (float): Feedback signal. 
+            norm (float, optional): Normalization factor. Defaults to 1.0.
+        """
+
+        # Since this is non-stationary, subtract mean of previous self.window errors. 
+        self.error_buffer.append(feedback)
+        self.error_buffer = self.error_buffer[-self.window:]
+        
+        # normalize
+        feedback -= np.mean(self.error_buffer)
+        if self.use_std and len(self.error_buffer) > 1: norm = np.std(self.error_buffer); 
+        feedback /= norm 
+        
+        # update arm weights
+        self.w[self.arm] *= self.decay
+        self.w[self.arm] += self.lr * (feedback/max(np.exp(self.w[self.arm]), 0.0001))
+        
+        self.data.append(feedback)
+
+
+class TOPSAC(Agent):
     
     def __init__(self, 
         pi_net: str = "continuous_mlp2", 
         q_net: str = "continuous_mlp2",
-        autotune: bool = False, 
-        target_entropy: float = -4, 
         gamma: float = 0.99,
+        autotune: bool = False, 
+        target_entropy: float = -4,  
         alpha: float = 0.2, 
+        num_quantiles: int = 25, 
         tau: float = 0.005, 
         batch_per_step: int = 1, 
         policy_delay: int = 1,
         pi_lr: float = 3e-4,
         q_lr: float = 1e-3, 
+        bandit_lr: float = 0.1, 
         batch_size: int = 256, 
         **memory_kwargs
     ):
@@ -34,18 +121,26 @@ class SAC(Agent):
         self._target_entropy = target_entropy # -0.5 * np.prod(self.memory.env_info["action_shape"])
         self._gamma = gamma
         self._alpha = alpha
+        self._num_quantiles = num_quantiles
         self._tau = tau
         self._batch_per_step = batch_per_step
         self._policy_delay = policy_delay
         self._batch_size = batch_size 
         self._q_lr = q_lr
         self._pi_lr = pi_lr
+        self._bandit_lr = bandit_lr
+        # bandit 
+        self.bandit = ExpWeights(arms=DEFAULT_ARMS, lr=bandit_lr, init=0.0, use_std=True) 
+        # optimism
+        self._beta = 0
+        # 
+        self._prev_episode_score = None
         # networks
         self._pi = probabilistic_policy_map[pi_net](**self.env_info).to(self._device)
-        self._q1 = qvalue_map[q_net](**self.env_info).to(self._device)
-        self._q2 = qvalue_map[q_net](**self.env_info).to(self._device)
-        self._q1_target = qvalue_map[q_net](**self.env_info).eval().to(self._device)
-        self._q2_target = qvalue_map[q_net](**self.env_info).eval().to(self._device)
+        self._q1 = quantile_qvalue_map[q_net](num_quantiles=self._num_quantiles, **self.env_info).to(self._device)
+        self._q2 = quantile_qvalue_map[q_net](num_quantiles=self._num_quantiles, **self.env_info).to(self._device)
+        self._q1_target = quantile_qvalue_map[q_net](num_quantiles=self._num_quantiles, **self.env_info).eval().to(self._device)
+        self._q2_target = quantile_qvalue_map[q_net](num_quantiles=self._num_quantiles, **self.env_info).eval().to(self._device)
         self._hard_update(self._q1, self._q1_target)
         self._hard_update(self._q2, self._q2_target)
         # no grad for target networks
@@ -68,18 +163,19 @@ class SAC(Agent):
             "batch_size": self._batch_size, 
             "q_lr": self._q_lr, 
             "pi_lr": self._pi_lr, 
+            "bandir_lr": self._bandit_lr, 
         }
         return param
     
     @property
     def extra_fields(self):
-        """SAC algo do not need extra fields
+        """TOPSAC algo do not need extra fields
         """
         return ()
 
     @property
     def derived_fields(self):
-        """There is no derived field for SAC algorithm.
+        """There is no derived field for TOPSAC algorithm.
         """
         return ()
 
@@ -108,8 +204,8 @@ class SAC(Agent):
         if self._pi.independent_actions: 
             entropy = entropy.sum(dim=-1)
         observation_cloud = th.stack(10*[observation], dim=0)
-        q1val = self._q1(observation_cloud, action_cloud).mean(dim=0)
-        q2val = self._q2(observation_cloud, action_cloud).mean(dim=0)
+        q1val = self._q1(observation_cloud, action_cloud).mean(dim=0).mean(dim=-1) # batch, double mean due to quantiles
+        q2val = self._q2(observation_cloud, action_cloud).mean(dim=0).mean(dim=-1) # batch, double mean due to quantiles
         value = 0.5*(q1val + q2val).squeeze(-1) + self._alpha * entropy
         if self._autotune: # correct value 
             value = value - 1/(1-self._gamma) * self._alpha * self._target_entropy 
@@ -125,7 +221,14 @@ class SAC(Agent):
         return value
 
     def reset(self):
-        pass
+        if self._prev_episode_score is not None:
+            self.bandit.update_dists(self._episode_score - self._prev_episode_score)
+        #for i, p in enumerate(self.bandit.get_probs()):
+        #    self.log(f'bandit_arm_probs_{i}', p)
+        self._beta = self.bandit.sample() # sample optimism
+        self.log("beta", self._beta)
+        self._prev_episode_score = self._episode_score
+
 
     def _soft_update(self, local_model, target_model):
         for target_param, local_param in zip(target_model.parameters(), local_model.parameters()):
@@ -145,27 +248,29 @@ class SAC(Agent):
                 next_entropy = - next_action_distr.log_prob(next_action)
                 if self._pi.independent_actions: 
                     next_entropy = next_entropy.sum(dim=-1, keepdim=True)
-                next_qvalue1 = self._q1_target(next_observation, next_action)
-                next_qvalue2 = self._q2_target(next_observation, next_action)
-                next_value_target = th.min(next_qvalue1, next_qvalue2) + self._alpha * next_entropy
-                qvalue = reward.unsqueeze(-1) + self._gamma * next_value_target * done.logical_not().unsqueeze(-1)
+                next_qvalue1_qtls = self._q1_target(next_observation, next_action) # batch x num_quants 
+                next_qvalue2_qtls = self._q2_target(next_observation, next_action) # batch x num_quants 
+                next_qvalue_qtls_mu = 0.5*(next_qvalue1_qtls + next_qvalue2_qtls) # batch x num_quants, epistemic mean
+                next_qvalue_qtls_std = th.sqrt(1e-5+(next_qvalue1_qtls-next_qvalue_qtls_mu).square() + (next_qvalue2_qtls-next_qvalue_qtls_mu).square()) # batch x num_quants, epistemic mean
+                next_value_qtls_target = next_qvalue_qtls_mu + self._beta * next_qvalue_qtls_std + self._alpha * next_entropy
+                target_qvalue_qtls = reward.unsqueeze(-1) + self._gamma * next_value_qtls_target * done.logical_not().unsqueeze(-1)
             # update critics
             self._q_optim.zero_grad()
-            qvalue1_est = self._q1(observation, action)
-            qvalue1_loss = 0.5*th.nn.functional.mse_loss(qvalue1_est, qvalue)
-            qvalue2_est = self._q2(observation, action)
-            qvalue2_loss = 0.5*th.nn.functional.mse_loss(qvalue2_est, qvalue)
+            qvalue1_est_qtls = self._q1(observation, action)
+            qvalue1_loss = self.quantile_huber_loss(qvalue1_est_qtls, target_qvalue_qtls) 
+            qvalue2_est_qtls = self._q2(observation, action)
+            qvalue2_loss = self.quantile_huber_loss(qvalue2_est_qtls, target_qvalue_qtls) 
             qvalue_loss = qvalue1_loss + qvalue2_loss
-            q_std = 0.5*(qvalue1_est - qvalue2_est).abs()
             qvalue_loss.backward()
             self._q_optim.step()
             self._soft_update(self._q1, self._q1_target)
             self._soft_update(self._q2, self._q2_target)
+            wd = self.compute_wd_quantile(qvalue1_est_qtls, qvalue2_est_qtls).mean() # average wassertein-distance between q1 and q2
             self.log("q_loss", qvalue_loss.item())
             self.log("q1_loss", qvalue1_loss.item())
             self.log("q2_loss", qvalue2_loss.item())
-            self.log("q_avg", 0.5*(qvalue1_est+qvalue2_est).mean().item())
-            self.log("q_std_avg", q_std.mean().item())
+            self.log("wd", wd.item())
+            #self.log("beta", self._beta)
             # train policy one time
             if (i+1) % self._policy_delay == 0:
                 self._pi_optim.zero_grad()
@@ -174,18 +279,19 @@ class SAC(Agent):
                 entropy = - action_distr.log_prob(action_imaginary)
                 if self._pi.independent_actions: 
                     entropy = entropy.sum(dim=-1, keepdim=True)
-                q1_onpolicy = self._q1(observation, action_imaginary)
-                q2_onpolicy = self._q2(observation, action_imaginary)
-                q_onpolicy = th.min(q1_onpolicy, q2_onpolicy)
-                q_std_onpolicy = 0.5*(q1_onpolicy - q2_onpolicy).abs()
-                q_mean_onpolicy = 0.5*(q1_onpolicy + q2_onpolicy)
+                q1_onpolicy_qtls = self._q1(observation, action_imaginary)
+                q2_onpolicy_qtls = self._q2(observation, action_imaginary)
+                q_onpolicy_qtls_mu = 0.5*(q1_onpolicy_qtls + q2_onpolicy_qtls) # batch x num_quants, epistemic mean
+                q_onpolicy_qtls_std = th.sqrt(1e-5+(q1_onpolicy_qtls-q_onpolicy_qtls_mu).square() + (q2_onpolicy_qtls-q_onpolicy_qtls_mu).square()) # batch x num_quants, epistemic mean
+                q_onpolicy_qtls_obj = q_onpolicy_qtls_mu + self._beta * q_onpolicy_qtls_std 
+                q_onpolicy = q_onpolicy_qtls_obj.mean(dim=-1)
                 pi_loss = -(q_onpolicy + self._alpha * entropy).mean()
                 pi_loss.backward()
                 self._pi_optim.step()
                 self.log("pi_loss", pi_loss.item())
                 self.log("pi_entropy_avg", entropy.mean().item())
-                self.log("q_onpolicy_avg", q_mean_onpolicy.mean().item())
-                self.log("q_std_onpolicy_avg", q_std_onpolicy.mean().item())
+                self.log("q_onpolicy_avg", q_onpolicy_qtls_mu.mean().item())
+                self.log("q_std_onpolicy_avg", q_onpolicy_qtls_std.mean().item())
                 # if autotune
                 if self._autotune:
                     entropy_ = entropy.mean().cpu().item()
@@ -225,6 +331,26 @@ class SAC(Agent):
         pass
 
     @staticmethod
+    def quantile_huber_loss(quantiles, samples):
+        # samples: # batch x num_quant_sample
+        # quantiles: # batch x num_quant
+        pairwise_delta = samples[:, None, :] - quantiles[:, :, None]  # batch x num_quant x num_quant_sample 
+        abs_pairwise_delta = th.abs(pairwise_delta)
+        huber_loss = th.where(abs_pairwise_delta > 1,
+                                abs_pairwise_delta - 0.5,
+                                pairwise_delta ** 2 * 0.5)
+        n_quantiles = quantiles.shape[-1]
+        tau = th.arange(n_quantiles, device=pairwise_delta.device).float() / n_quantiles + 1 / 2 / n_quantiles
+        loss = (th.abs(tau[None, :, None] - (pairwise_delta < 0).float()) * huber_loss).mean()
+        return loss
+
+    @staticmethod
+    def compute_wd_quantile(q1_qtls, q2_qtls, wd_gamma = 1.0):
+        wd = th.pow(th.sum(th.pow(th.abs(q1_qtls - q2_qtls), wd_gamma)), 1 / wd_gamma)
+        wd = wd.mean(dim=-1) # do not mean by batch for now. 
+        return wd
+
+    @staticmethod
     def add_model_specific_args(parent_parser):
         parser = ArgumentParser(parents=[parent_parser], add_help=False)
         parser = Agent.add_model_specific_args(parser)
@@ -235,6 +361,7 @@ class SAC(Agent):
         parser.add_argument("--target_entropy", type=float, default=-4)
         parser.add_argument("--gamma", type=float, default=0.99)
         parser.add_argument("--alpha", type=float, default=0.2)
+        parser.add_argument("--num_quantiles", type=int, default=25)
         parser.add_argument("--tau", type=float, default=0.005)
         parser.add_argument("--batch_per_step", type=int, default=1)
         parser.add_argument("--target_update_interval", type=int, default=1)
