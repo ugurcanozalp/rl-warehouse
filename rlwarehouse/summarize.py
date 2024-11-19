@@ -108,8 +108,8 @@ def summarize(path: os.PathLike, result_path: os.PathLike, ncolsrows: Tuple[int]
         ax_error.grid()
         ax_score.xaxis.set_major_formatter(ticker.EngFormatter()) 
         ax_error.xaxis.set_major_formatter(ticker.EngFormatter()) 
-        #if env == "Humanoid-v4": 
-        #    ax_error.set_ylim([-300, 200])
+        if env == "Humanoid-v4": 
+            ax_error.set_ylim([-300, 200])
     fig_score.tight_layout()
     fig_error.tight_layout()
     if not os.path.isdir(result_path):
