@@ -1,12 +1,12 @@
 
 from argparse import ArgumentParser
 
-from rlwarehouse.algos import DPAC
+from rlwarehouse.algos import STAC
 
 parser = ArgumentParser()
-parser = DPAC.add_model_specific_args(parser)
+parser = STAC.add_model_specific_args(parser)
 args = parser.parse_args()
 dict_args = vars(args)
-agent = DPAC(**dict_args)
+agent = STAC(**dict_args)
 
 agent.experiment()

@@ -11,9 +11,9 @@ from ..agent import Agent
 from ..nets import probabilistic_policy_map, probabilistic_qvalue_map
 
 
-class DPAC(Agent):
+class STAC(Agent):
     
-    """Deep Pessimistic Actor Critic
+    """Stochastic Actor Critic
     """
     
     def __init__(self, 
@@ -61,13 +61,13 @@ class DPAC(Agent):
         
     @property
     def extra_fields(self):
-        """DPAC algo do not need extra fields
+        """STAC algo do not need extra fields
         """
         return ()
 
     @property
     def derived_fields(self):
-        """There is no derived field of DPAC algorithm. 
+        """There is no derived field of STAC algorithm. 
         """
         return ()
     
@@ -134,8 +134,6 @@ class DPAC(Agent):
                     next_entropy = next_entropy.sum(dim=-1, keepdim=True)  
                 next_q_distr = self._q_target(next_observation, next_action)
                 next_value_target = (next_q_distr.mean - self._beta * next_q_distr.stddev + self._alpha * next_entropy) * done.logical_not().unsqueeze(-1)
-                # self._tau/(2*self._alpha)
-                # self._beta
                 q_target_sample = reward.unsqueeze(-1) + self._gamma * next_value_target 
             # critic learning behavioral policy 
             self._q_optim.zero_grad()
