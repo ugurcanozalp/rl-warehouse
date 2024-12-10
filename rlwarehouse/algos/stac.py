@@ -23,7 +23,7 @@ class STAC(Agent):
         target_entropy: float = -4, 
         gamma: float = 0.99, 
         alpha: float = 0.2, 
-        beta: float = 0.005, 
+        beta: float = 0.5, 
         dropout: float = 0.01, 
         tau: float = 0.005, 
         batch_per_step: int = 1, 
@@ -157,7 +157,7 @@ class STAC(Agent):
                 if self._pi.independent_actions: 
                     pi_entropy = pi_entropy.sum(dim=-1, keepdim=True)
                 q_onpolicy_distr = self._q(observation, action_onpolicy)
-                q_onpolicy = q_onpolicy_distr.mean 
+                q_onpolicy = q_onpolicy_distr.mean - self._beta * q_onpolicy_distr.stddev
                 pi_obj = - (q_onpolicy + self._alpha * pi_entropy)
                 pi_loss = pi_obj.mean()
                 self.log("pi_loss", pi_loss.item())
@@ -227,7 +227,7 @@ class STAC(Agent):
         parser.add_argument("--target_entropy", type=float, default=-4)
         parser.add_argument("--gamma", type=float, default=0.99)
         parser.add_argument("--alpha", type=float, default=0.2)
-        parser.add_argument("--beta", type=float, default=0.005)
+        parser.add_argument("--beta", type=float, default=0.5)
         parser.add_argument("--dropout", type=float, default=0.01)
         parser.add_argument("--tau", type=float, default=0.005)
         parser.add_argument("--batch_per_step", type=int, default=1)

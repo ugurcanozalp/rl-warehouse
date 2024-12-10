@@ -31,7 +31,7 @@ def summarize(path: os.PathLike, result_path: os.PathLike, ncolsrows: Tuple[int]
         algo_dict = {}
         env_path = os.path.join(path, env)
         for j, algo in enumerate(sorted(os.listdir(env_path))):
-            algo_for_legend = "$"+algo.replace("__", "\\:").replace("@", "\\").replace("~", "/")+"$"
+            algo_for_legend = "$"+algo.replace("__", "\\quad").replace("@", "\\").replace("~", "/")+"$" 
             algo_path = os.path.join(env_path, algo)
             results = {}
             for k, trial in enumerate(sorted(os.listdir(algo_path))):
