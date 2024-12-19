@@ -20,6 +20,7 @@ class STAC(Agent):
         pi_net: str = "continuous_mlp2", 
         q_net: str = "continuous_mlp2",
         autotune: bool = True, 
+        dropout_bootstrap: bool = True, 
         target_entropy: float = -4, 
         gamma: float = 0.99, 
         alpha: float = 0.2, 
@@ -37,6 +38,7 @@ class STAC(Agent):
         # hyperparameters
         self._gamma = gamma
         self._autotune = autotune
+        self._dropout_bootstrap = dropout_bootstrap
         self._target_entropy = target_entropy
         self._alpha = alpha
         self._beta = beta
@@ -51,7 +53,9 @@ class STAC(Agent):
         self._pi = probabilistic_policy_map[pi_net](**self.env_info, dropout=self._dropout).to(self._device)
         self._q = probabilistic_qvalue_map[q_net](dropout=self._dropout, **self.env_info).to(self._device)
         self._q_target = probabilistic_qvalue_map[q_net](dropout=self._dropout, **self.env_info).to(self._device)
-        #
+        if not self._dropout_bootstrap:
+            print("Dropout is deactivated for target critic network. ")
+            self._q_target.eval() # eval mode deactivates dropout
         # no grad for target networks
         for param in self._q_target.parameters():
             param.requires_grad = False
@@ -224,6 +228,8 @@ class STAC(Agent):
         parser.add_argument("--q_net", type=str, default="continuous_mlp2")
         parser.add_argument("--autotune", action="store_true", default=False)
         parser.add_argument('--no-autotune', dest="autotune", action="store_false")
+        parser.add_argument("--dropout-bootstrap", action="store_true", default=True)
+        parser.add_argument("--no-dropout-bootstrap", dest="dropout_bootstrap", action="store_false")
         parser.add_argument("--target_entropy", type=float, default=-4)
         parser.add_argument("--gamma", type=float, default=0.99)
         parser.add_argument("--alpha", type=float, default=0.2)
