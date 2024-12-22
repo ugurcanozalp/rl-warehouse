@@ -8,10 +8,10 @@ import pandas as pd
 import matplotlib.pyplot as plt 
 from matplotlib import colormaps
 import matplotlib.ticker as ticker
-from scipy.ndimage import gaussian_filter1d, uniform_filter1d
+
 
 @staticmethod
-def summarize(path: os.PathLike, result_path: os.PathLike, ncolsrows: Tuple[int], colormap: str = "tab10", smooth_window: int = 5, figsize: Tuple[int] = (16, 9)):
+def summarize(path: os.PathLike, result_path: os.PathLike, ncolsrows: Tuple[int], colormap: str = "tab10", smooth_window: int = 3, figsize: Tuple[int] = (16, 9)):
     """Summarize everything about the results
     """
     # ex: Agent.summarize("logs", "res", (6, 1), colormap="Set1", smooth_window=3)
@@ -48,53 +48,46 @@ def summarize(path: os.PathLike, result_path: os.PathLike, ncolsrows: Tuple[int]
                                 results[step_][param] = []
                             results[step_][param].append(valparam)
                             #print(results[step_])
-                            #print("---")
             step = list(results.keys())
             step.sort() # sort stuff
             #print(results)
-            eval_score = np.array([results[s]["eval_score"] for s in step])
-            if "eval_value_error" in results[step[0]]:
-                eval_error = np.array([results[s]["eval_value_error"] for s in step])
-            else:
-                eval_error = None
+            eval_score = np.array([results[s]["eval_score"] for s in step]) # shape: step, trial
+            eval_error = np.array([results[s]["eval_value_error"] for s in step]) # shape: step, trial
             step = np.array(step) # make it also numpy array
-            # -----eval score-----
-            eval_score_mean = eval_score.mean(axis=1) # mean across trials
-            eval_score_var = eval_score.var(axis=1) # var across trials
-            eval_score_std = np.sqrt(eval_score_var)
-            # moving average filtering for better visual
-            #eval_score_mean_ma = np.convolve(eval_score_mean, np.ones(smooth_window)/smooth_window, mode="same")
-            #eval_score_var_ma = np.convolve(eval_score_var, np.ones(smooth_window)/smooth_window, mode="same")
-            eval_score_mean_ma = uniform_filter1d(eval_score_mean, smooth_window)
-            eval_score_var_ma = uniform_filter1d(eval_score_var, smooth_window)
-            eval_score_std_ma = np.sqrt(eval_score_var_ma)
-            ax_score.plot(step, eval_score_mean_ma, color=COLORMAP(j), alpha=1.0, label=algo_for_legend)
+            num_steps = len(step)
+            # calculate mean and std. 
+            mean_eval_score = np.zeros(num_steps)         
+            std_eval_score = np.zeros(num_steps)
+            mean_eval_error = np.zeros(num_steps)                
+            std_eval_error = np.zeros(num_steps)            
+            for i in range(num_steps):
+                lft_lim = smooth_window if i>=smooth_window else i
+                rht_lim = smooth_window if i<=num_steps-smooth_window else num_steps - i
+                eval_score_window = eval_score[i-lft_lim:i+rht_lim, :].flatten()
+                eval_error_window = eval_error[i-lft_lim:i+rht_lim, :].flatten()
+                # 
+                mean_eval_score[i] = eval_score_window.mean()             
+                std_eval_score[i] = eval_score_window.std()
+                mean_eval_error[i] = eval_error_window.mean()                
+                std_eval_error[i] = eval_error_window.std()
+            # ----- eval score -----
+            ax_score.plot(step, mean_eval_score, color=COLORMAP(j), alpha=1.0, label=algo_for_legend)
             ax_score.fill_between(step, 
-                eval_score_mean_ma - eval_score_std_ma,
-                eval_score_mean_ma + eval_score_std_ma,
+                mean_eval_score - std_eval_score,
+                mean_eval_score + std_eval_score,
                 facecolor=COLORMAP(j), alpha=0.3)
-            # -----eval value error-----
-            if eval_error is not None: 
-                eval_error_mean = eval_error.mean(axis=1) # mean across trials
-                eval_error_var = eval_error.var(axis=1) # var across trials
-                eval_error_std = np.sqrt(eval_error_var)
-                # moving average filtering for better visual
-                #eval_error_mean_ma = np.convolve(eval_error_mean, np.ones(smooth_window)/smooth_window, mode="same")
-                #eval_error_var_ma = np.convolve(eval_error_var, np.ones(smooth_window)/smooth_window, mode="same")
-                eval_error_mean_ma = uniform_filter1d(eval_error_mean, smooth_window)
-                eval_error_var_ma = uniform_filter1d(eval_error_var, smooth_window)
-                eval_error_std_ma = np.sqrt(eval_error_var_ma)
-                ax_error.plot(step, eval_error_mean_ma, color=COLORMAP(j), alpha=1.0, label=algo_for_legend)
-                ax_error.fill_between(step, 
-                    eval_error_mean_ma - eval_error_std_ma,
-                    eval_error_mean_ma + eval_error_std_ma,
-                    facecolor=COLORMAP(j), alpha=0.3)
+            # ----- eval value error -----
+            ax_error.plot(step, mean_eval_error, color=COLORMAP(j), alpha=1.0, label=algo_for_legend)
+            ax_error.fill_between(step, 
+                mean_eval_error - std_eval_error,
+                mean_eval_error + std_eval_error,
+                facecolor=COLORMAP(j), alpha=0.3)
             # 
             algo_dict[algo] = {
                 "auc_scores": eval_score.mean(), 
                 "max_scores": eval_score.max(), 
-                "last_scores_mean": eval_score_mean[-1].mean(), 
-                "last_scores_std": eval_score_std[-1]
+                "last_score_mean": mean_eval_score[-1], 
+                "last_score_std": std_eval_score[-1]
             }
         env_dict[env] = algo_dict
         ax_score.set_ylabel("total reward", fontsize=10)
@@ -108,8 +101,8 @@ def summarize(path: os.PathLike, result_path: os.PathLike, ncolsrows: Tuple[int]
         ax_error.grid()
         ax_score.xaxis.set_major_formatter(ticker.EngFormatter()) 
         ax_error.xaxis.set_major_formatter(ticker.EngFormatter()) 
-        if env == "Humanoid-v4": 
-            ax_error.set_ylim([-300, 200])
+        #if env == "Humanoid-v4": 
+        #    ax_error.set_ylim([-300, 200])
     fig_score.tight_layout()
     fig_error.tight_layout()
     if not os.path.isdir(result_path):
