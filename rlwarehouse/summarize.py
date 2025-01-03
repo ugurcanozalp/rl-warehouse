@@ -22,7 +22,7 @@ def summarize(path: os.PathLike, result_path: os.PathLike, ncolsrows: Tuple[int]
     num_envs = len(os.listdir(path))
     assert ncol*nrow == len(os.listdir(path)), "Number of environments do not match layout"
     env_dict = {}
-    for i, env in enumerate(os.listdir(path)):
+    for i, env in enumerate(sorted(os.listdir(path))):
         ax_score = fig_score.add_subplot(ncol, nrow, i+1)
         ax_score.set_title(env)
         ax_error = fig_error.add_subplot(ncol, nrow, i+1)
