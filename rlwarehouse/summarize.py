@@ -95,14 +95,12 @@ def summarize(path: os.PathLike, result_path: os.PathLike, ncolsrows: Tuple[int]
         ax_error.set_ylabel("value error", fontsize=10)
         ax_error.set_xlabel("# env interactions", fontsize=10)
         #if i == 0: # only for first plot
-        ax_score.legend(loc="upper left", framealpha=0.25, prop={'size': 6})
-        ax_error.legend(loc="upper left", framealpha=0.25, prop={'size': 6})
+        ax_score.legend(loc="upper left", framealpha=0.25, prop={'size': 8})
+        ax_error.legend(loc="upper left", framealpha=0.25, prop={'size': 8})
         ax_score.grid()
         ax_error.grid()
         ax_score.xaxis.set_major_formatter(ticker.EngFormatter()) 
         ax_error.xaxis.set_major_formatter(ticker.EngFormatter()) 
-        #if env == "Humanoid-v4": 
-        #    ax_error.set_ylim([-300, 200])
     fig_score.tight_layout()
     fig_error.tight_layout()
     if not os.path.isdir(result_path):
