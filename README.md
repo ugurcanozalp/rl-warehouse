@@ -8,7 +8,15 @@ You can find scripts in scripts folder. These scripts can be manipulated as much
 python -m scripts.stac --env_name Hopper-v4 --autotune --target_entropy -1 --beta 0.75
 ```
 
-## Algorithms implemented
-- [x] Deep Bayesian Actor Critic (not published yet)
+## Off-policy Algorithms implemented
+- [x] Stochastic Actor Critic (not published yet)
+- [x] [Dropout Q Functions](https://arxiv.org/pdf/2110.02034)
 - [x] [Soft Actor Critic](https://arxiv.org/abs/1812.05905v2)
+- [x] [Tactical Optimism Pessimism for DRL]()
+- [x] [Tactical Optimism Pessimism for DRL (SAC variant)]()
+- [x] [Truncated Quantile Critics](https://arxiv.org/abs/2005.04269)
+
+## On-policy Algorithms implemented
 - [x] [Proximal Policy Optimization](https://arxiv.org/abs/1707.06347)
+
+
