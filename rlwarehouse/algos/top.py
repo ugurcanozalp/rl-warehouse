@@ -98,6 +98,10 @@ class ExpWeights(object):
 
 class TOP(Agent):
     
+    """Tactical Optimism and Pessimism for Deep Reinforcement Learning
+    https://arxiv.org/abs/2102.03765
+    """
+    
     def __init__(self, 
         pi_net: str = "continuous_mlp2", 
         q_net: str = "continuous_mlp2",

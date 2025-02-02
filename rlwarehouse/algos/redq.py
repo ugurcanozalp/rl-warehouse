@@ -9,13 +9,13 @@ import torch as th
 from torch.optim import Adam, AdamW, Optimizer
 
 from ..agent import Agent
-from ..nets import probabilistic_policy_map, quantile_qvalue_map
+from ..nets import probabilistic_policy_map, qvalue_map
 
 
-class TQC(Agent):
+class REDQ(Agent):
     
-    """Truncated Quantile Critics 
-    https://arxiv.org/abs/2005.04269
+    """Randomized Ensembled Double Q-Learning
+    https://arxiv.org/abs/2101.05982
     """
     
     def __init__(self, 
@@ -26,8 +26,7 @@ class TQC(Agent):
         gamma: float = 0.99, 
         alpha: float = 0.2, 
         num_ensemble: int = 5, 
-        num_quantiles: int = 25, 
-        num_drop_quantiles_per_net: float = 2, 
+        num_subset: int = 2, 
         tau: float = 0.005, 
         batch_per_step: int = 1, 
         policy_delay: int = 1, 
@@ -37,16 +36,14 @@ class TQC(Agent):
         **memory_kwargs
     ):
         super().__init__(**memory_kwargs)
+        assert num_ensemble >= num_subset, "num_ensemble must be greater than or equal to num_subset"
         # hyperparameters
         self._gamma = gamma
         self._autotune = autotune
         self._target_entropy = target_entropy
         self._alpha = alpha
         self._num_ensemble = num_ensemble
-        self._num_quantiles = num_quantiles
-        self._total_quantiles = num_ensemble * num_quantiles
-        self._num_drop_quantiles_per_net = num_drop_quantiles_per_net
-        self._total_drop_quantiles = num_ensemble * num_drop_quantiles_per_net
+        self._num_subset = num_subset
         self._tau = tau
         self._batch_per_step = batch_per_step
         self._policy_delay = policy_delay
@@ -58,8 +55,8 @@ class TQC(Agent):
         self._qs = []
         self._qs_target = []
         for _ in range(self._num_ensemble):
-            q = quantile_qvalue_map[q_net](num_quantiles=self._num_quantiles, **self.env_info).to(self._device)
-            q_target = quantile_qvalue_map[q_net](num_quantiles=self._num_quantiles, **self.env_info).to(self._device)
+            q = qvalue_map[q_net](**self.env_info).to(self._device)
+            q_target = qvalue_map[q_net](**self.env_info).to(self._device)
             # no grad for target networks
             for param in q_target.parameters():
                 param.requires_grad = False
@@ -71,13 +68,13 @@ class TQC(Agent):
         
     @property
     def extra_fields(self):
-        """TQC algo do not need extra fields
+        """DBAC algo do not need extra fields
         """
         return ()
 
     @property
     def derived_fields(self):
-        """There is no derived field of TQC algorithm. 
+        """There is no derived field of DROQ algorithm. 
         """
         return ()
     
@@ -109,7 +106,7 @@ class TQC(Agent):
         value = 0
         for q in self._qs:
             qvalues_ = q(observation_cloud, action_cloud)
-            value_ = qvalues_.mean(dim=0).mean(dim=-1) + self._alpha * entropy
+            value_ = qvalues_.mean(dim=0).squeeze(-1) + self._alpha * entropy
             value += value_ / self._num_ensemble  # averaged
         if self._autotune: # correct value 
             value = value - 1/(1-self._gamma) * self._alpha * self._target_entropy 
@@ -146,24 +143,19 @@ class TQC(Agent):
                 if self._pi.independent_actions: 
                     next_entropy = next_entropy.sum(dim=-1, keepdim=True)
                 next_q_values_list = []
-                for m in range(self._num_ensemble):
+                for m in random.sample(range(self._num_ensemble), 2):
                     qtarget = self._qs_target[m]
                     next_qvalue_ = qtarget(next_observation, next_action)
                     next_q_values_list.append(next_qvalue_)
-                next_q_values = th.stack(next_q_values_list, dim=-2) # batch x num_nets x num_quants 
-                next_q_values_sorted, _ = next_q_values.flatten(start_dim=1).sort(dim=-1) # batch x num_nets * num_quants 
-                next_q_values_truncated = next_q_values_sorted[:, :self._total_quantiles-self._total_drop_quantiles]
-                next_qvalue_target = next_q_values_truncated + self._alpha * next_entropy
-                qvalue = reward.unsqueeze(-1) + self._gamma * next_qvalue_target * done.logical_not().unsqueeze(-1) # batch x rem_quants
+                next_q_values = th.stack(next_q_values_list, dim=0)
+                next_qvalue_target = next_q_values.min(dim=0).values + self._alpha * next_entropy
+                qvalue = reward.unsqueeze(-1) + self._gamma * next_qvalue_target * done.logical_not().unsqueeze(-1)
             # update critics
             self._q_optim.zero_grad()
             qvalue_loss = 0
-            qvalue_est_list = []
             for q in self._qs:
-                qvalue_est_k = q(observation, action)
-                qvalue_est_list.append(qvalue_est_k)
-            qvalue_est = th.stack(qvalue_est_list, dim=-2) # batch x num_nets x num_quant 
-            qvalue_loss = self.quantile_huber_loss(qvalue_est, qvalue) 
+                qvalue_est_ = q(observation, action)
+                qvalue_loss += 0.5*th.nn.functional.mse_loss(qvalue_est_, qvalue) 
             qvalue_loss.backward()
             self._q_optim.step()
             self.log("q_loss", qvalue_loss.item())
@@ -179,11 +171,11 @@ class TQC(Agent):
                     entropy = entropy.sum(dim=-1, keepdim=True)
                 qs_onpolicy_list = []
                 for q in self._qs:
-                    q_onpolicy = q(observation, action_imaginary)
-                    qs_onpolicy_list.append(q_onpolicy)
-                qs_onpolicy = th.stack(qs_onpolicy_list, dim=-1).flatten(start_dim=1) # batch x num_quant * num_nets
-                q_mean_onpolicy = qs_onpolicy.mean(dim=-1, keepdim=True)
-                q_std_onpolicy = qs_onpolicy.std(dim=-1, keepdim=True)
+                    q_onpolicy_ = q(observation, action_imaginary)
+                    qs_onpolicy_list.append(q_onpolicy_)
+                qs_onpolicy = th.stack(qs_onpolicy_list, dim=0)
+                q_mean_onpolicy = qs_onpolicy.mean(dim=0)
+                q_std_onpolicy = qs_onpolicy.std(dim=0)
                 pi_loss = -(q_mean_onpolicy + self._alpha * entropy).mean()
                 pi_loss.backward()
                 self._pi_optim.step()
@@ -205,8 +197,7 @@ class TQC(Agent):
             "gamma": self._gamma, 
             "alpha": self._alpha, 
             "num_ensemble": self._num_ensemble, 
-            "num_quantiles": self._num_quantiles, 
-            "num_drop_quantiles_per_net": self._num_drop_quantiles_per_net, 
+            "num_subset": self._num_subset, 
             "tau": self._tau, 
             "batch_per_step": self._batch_per_step, 
             "batch_size": self._batch_size, 
@@ -242,21 +233,7 @@ class TQC(Agent):
 
     def experiment_end(self): 
         pass
-
-    @staticmethod
-    def quantile_huber_loss(quantiles, samples):
-        # samples: # batch x rem_quants
-        # quantiles: # batch x num_nets x num_quant
-        pairwise_delta = samples[:, None, None, :] - quantiles[:, :, :, None]  # batch x nets x quantiles x samples
-        abs_pairwise_delta = th.abs(pairwise_delta)
-        huber_loss = th.where(abs_pairwise_delta > 1,
-                                abs_pairwise_delta - 0.5,
-                                pairwise_delta ** 2 * 0.5)
-        n_quantiles = quantiles.shape[2]
-        tau = th.arange(n_quantiles, device=pairwise_delta.device).float() / n_quantiles + 1 / 2 / n_quantiles
-        loss = (th.abs(tau[None, None, :, None] - (pairwise_delta < 0).float()) * huber_loss).mean()
-        return loss
-
+    
     @staticmethod
     def add_model_specific_args(parent_parser):
         parser = ArgumentParser(parents=[parent_parser], add_help=False)
@@ -269,8 +246,7 @@ class TQC(Agent):
         parser.add_argument("--gamma", type=float, default=0.99)
         parser.add_argument("--alpha", type=float, default=0.2)
         parser.add_argument("--num_ensemble", type=int, default=5)
-        parser.add_argument("--num_quantiles", type=int, default=25)
-        parser.add_argument("--num_drop_quantiles_per_net", type=int, default=2)
+        parser.add_argument("--num_subset", type=int, default=2)
         parser.add_argument("--tau", type=float, default=0.005)
         parser.add_argument("--batch_per_step", type=int, default=1)
         parser.add_argument("--policy_delay", type=int, default=1)
