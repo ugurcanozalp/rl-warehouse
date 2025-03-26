@@ -9,6 +9,7 @@ import numpy as np
 from datetime import datetime
 from typing import List, Tuple, Union, Dict, Any
 import pickle 
+import json
 import time
 
 import gymnasium as gym
@@ -19,6 +20,7 @@ from .logger import Logger
 import pandas as pd
 
 from .episode_memory import EpisodeMemory
+
 
 type_to_torch_dtype_dict = {
     "bool"       : th.bool,
@@ -497,5 +499,6 @@ class Agent(object):
         parser.add_argument("--logging", action="store_true", default=False)
         parser.add_argument("--tblog", action="store_true", default=False)
         parser.add_argument("--algo_tag", type=str, default="")
-        #parser.add_argument("--env_kwargs", type=json.loads())
+        parser.add_argument("--env_kwargs", type=json.loads, default="{}")
+        #https://stackoverflow.com/questions/18608812/accepting-a-dictionary-as-an-argument-with-argparse-and-python
         return parser
