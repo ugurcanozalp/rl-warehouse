@@ -25,7 +25,7 @@ class STAC(Agent):
         gamma: float = 0.99, 
         alpha: float = 0.2, 
         beta: float = 0.5, 
-        dropout: float = 0.01, 
+        dropout: float = 0.0, 
         tau: float = 0.005, 
         batch_per_step: int = 1, 
         policy_delay: int = 1, 
@@ -234,7 +234,7 @@ class STAC(Agent):
         parser.add_argument("--gamma", type=float, default=0.99)
         parser.add_argument("--alpha", type=float, default=0.2)
         parser.add_argument("--beta", type=float, default=0.5)
-        parser.add_argument("--dropout", type=float, default=0.01)
+        parser.add_argument("--dropout", type=float, default=0.0)
         parser.add_argument("--tau", type=float, default=0.005)
         parser.add_argument("--batch_per_step", type=int, default=1)
         parser.add_argument("--policy_delay", type=int, default=1)
