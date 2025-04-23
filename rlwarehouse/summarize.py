@@ -40,19 +40,26 @@ def summarize(path: os.PathLike, result_path: os.PathLike, ncolsrows: Tuple[int]
                     #print(os.path.join(trial_dir, "data.jsonl"))
                     for line in f:
                         step_ = line["step"]
-                        if step_ not in results.keys(): 
-                            results[step_] = {}
                         for param, valparam in line.items():
-                            #print(f"{param} = {valparam}")
+                            if param not in ["eval_score", "eval_value_error"]:
+                                continue
+                            else:
+                                if step_ not in results.keys(): 
+                                    results[step_] = {}                                
                             if param not in results[step_]:
                                 results[step_][param] = []
                             results[step_][param].append(valparam)
-                            #print(results[step_])
             step = list(results.keys())
             step.sort() # sort stuff
-            #print(results)
-            eval_score = np.array([results[s]["eval_score"] for s in step]) # shape: step, trial
-            eval_error = np.array([results[s]["eval_value_error"] for s in step]) # shape: step, trial
+            try:
+                eval_score = np.array([results[s]["eval_score"] for s in step]) # shape: step, trial
+                eval_error = np.array([results[s]["eval_value_error"] for s in step]) # shape: step, trial
+            except:
+                print(env)
+                print(algo)
+                print("4234234324")
+                exit()
+
             step = np.array(step) # make it also numpy array
             num_steps = len(step)
             # calculate mean and std. 

@@ -55,7 +55,7 @@ class Agent(object):
                  render_mode: str = "human", 
                  recording: bool = True, 
                  logging: bool = False, 
-                 tblog: bool = False, 
+                 tblogging: bool = False, 
                  algo_tag: str = "", 
                  env_kwargs: Dict = dict(), 
                  **memory_kwargs
@@ -85,7 +85,7 @@ class Agent(object):
         self._total_grad_steps = 0 # increment it as you learn from a single batch
         self._recording = recording
         self._logging = logging
-        self._tblog = tblog
+        self._tblogging = tblogging
         self._algo_tag = algo_tag
         # env
         self._env_name = env_name
@@ -309,8 +309,8 @@ class Agent(object):
         if self._logging or bypass:
             step = self._total_env_interactions if step is None else step
             self._logger.log(log_name, log_value, step)
-            if self._tblog:
-                self._tblogger.add_scalar(log_name, log_value, step)
+            if self._tblogging:
+                self._tbloggingger.add_scalar(log_name, log_value, step)
             
     def log_histogram(self, log_name: str, log_value: np.ndarray, step: int = None):
         """Log a vector during training
@@ -322,7 +322,7 @@ class Agent(object):
         """
         if self._logging:
             step = self._total_env_interactions if step is None else step
-            self._tblogger.add_histogram(log_name, log_value, step)
+            self._tbloggingger.add_histogram(log_name, log_value, step)
 
     def log_hparams(self, hparams: Dict[str, Union[bool, str, float, int]]):
         """Log a hyperparameters of the run
@@ -340,8 +340,8 @@ class Agent(object):
             text (str): Text to be logged
         """
         self._logger.log_text(description, text)
-        if self._tblog:
-            self._tblogger.add_text(description, text)
+        if self._tblogging:
+            self._tbloggingger.add_text(description, text)
 
     def _adjust_action(self, action):
         """This function takes action output of network bounded in (-1, 1)
@@ -376,6 +376,7 @@ class Agent(object):
         # compute_period > 0 for on-policy algos, compute when the time is ok
         # compute_flag = (self._compute_period==-1 and is_episode_end) or (self._total_env_interactions % self._compute_period == 0)
         compute_flag = is_episode_end if self._compute_period==-1 else (self._total_env_interactions % self._compute_period == 0)
+        # self.log("obs", self._observation) # TODO: Open this? but when?
         if compute_flag:
             self.memory._compute(self) 
         if is_episode_end: # end of the episode
@@ -468,9 +469,9 @@ class Agent(object):
         logname = os.path.join(self._env_name, self.algo_name+self._algo_tag, "seed"+str(self._seed)+current_time)
         self._logger = Logger(path=os.path.join("logs", logname))
         self._logger.open()
-        if self._tblog:
+        if self._tblogging:
             log_dir = os.path.join("runs", logname)
-            self._tblogger = SummaryWriter(log_dir=log_dir)
+            self._tbloggingger = SummaryWriter(log_dir=log_dir)
         # log hyperparameters
         self.log_hparams(self.hparams) # log available variables..
         self.log_text("env_name", self._env_name)
@@ -497,7 +498,7 @@ class Agent(object):
         parser.add_argument("--render_mode", type=str, default="human")
         parser.add_argument("--recording", action="store_true", default=True)
         parser.add_argument("--logging", action="store_true", default=False)
-        parser.add_argument("--tblog", action="store_true", default=False)
+        parser.add_argument("--tblogging", action="store_true", default=False)
         parser.add_argument("--algo_tag", type=str, default="")
         parser.add_argument("--env_kwargs", type=json.loads, default="{}")
         #https://stackoverflow.com/questions/18608812/accepting-a-dictionary-as-an-argument-with-argparse-and-python

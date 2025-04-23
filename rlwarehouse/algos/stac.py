@@ -50,7 +50,7 @@ class STAC(Agent):
         self._q_lr = q_lr
         self._pi_lr = pi_lr
         # networks
-        self._pi = probabilistic_policy_map[pi_net](**self.env_info, dropout=self._dropout).to(self._device)
+        self._pi = probabilistic_policy_map[pi_net](dropout=self._dropout, **self.env_info).to(self._device)
         self._q = probabilistic_qvalue_map[q_net](dropout=self._dropout, **self.env_info).to(self._device)
         self._q_target = probabilistic_qvalue_map[q_net](dropout=self._dropout, **self.env_info).to(self._device)
         if not self._dropout_bootstrap:

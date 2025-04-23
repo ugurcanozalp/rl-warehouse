@@ -20,6 +20,7 @@ class SAC(Agent):
         target_entropy: float = -4, 
         gamma: float = 0.99,
         alpha: float = 0.2, 
+        dropout: float = 0.0, 
         tau: float = 0.005, 
         batch_per_step: int = 1, 
         policy_delay: int = 1,
@@ -34,6 +35,7 @@ class SAC(Agent):
         self._target_entropy = target_entropy # -0.5 * np.prod(self.memory.env_info["action_shape"])
         self._gamma = gamma
         self._alpha = alpha
+        self._dropout = dropout        
         self._tau = tau
         self._batch_per_step = batch_per_step
         self._policy_delay = policy_delay
@@ -41,11 +43,11 @@ class SAC(Agent):
         self._q_lr = q_lr
         self._pi_lr = pi_lr
         # networks
-        self._pi = probabilistic_policy_map[pi_net](**self.env_info).to(self._device)
-        self._q1 = qvalue_map[q_net](**self.env_info).to(self._device)
-        self._q2 = qvalue_map[q_net](**self.env_info).to(self._device)
-        self._q1_target = qvalue_map[q_net](**self.env_info).eval().to(self._device)
-        self._q2_target = qvalue_map[q_net](**self.env_info).eval().to(self._device)
+        self._pi = probabilistic_policy_map[pi_net](dropout=self._dropout, **self.env_info).to(self._device)
+        self._q1 = qvalue_map[q_net](dropout=self._dropout, **self.env_info).to(self._device)
+        self._q2 = qvalue_map[q_net](dropout=self._dropout, **self.env_info).to(self._device)
+        self._q1_target = qvalue_map[q_net](dropout=self._dropout, **self.env_info).eval().to(self._device)
+        self._q2_target = qvalue_map[q_net](dropout=self._dropout, **self.env_info).eval().to(self._device)
         self._hard_update(self._q1, self._q1_target)
         self._hard_update(self._q2, self._q2_target)
         # no grad for target networks
@@ -63,6 +65,7 @@ class SAC(Agent):
             "target_entropy": self._target_entropy, 
             "gamma": self._gamma, 
             "alpha": self._alpha, 
+            "dropout": self._dropout,             
             "tau": self._tau, 
             "batch_per_step": self._batch_per_step, 
             "batch_size": self._batch_size, 
@@ -235,6 +238,7 @@ class SAC(Agent):
         parser.add_argument("--target_entropy", type=float, default=-4)
         parser.add_argument("--gamma", type=float, default=0.99)
         parser.add_argument("--alpha", type=float, default=0.2)
+        parser.add_argument("--dropout", type=float, default=0.0)        
         parser.add_argument("--tau", type=float, default=0.005)
         parser.add_argument("--batch_per_step", type=int, default=1)
         parser.add_argument("--target_update_interval", type=int, default=1)

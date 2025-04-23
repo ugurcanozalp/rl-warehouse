@@ -1,8 +1,18 @@
 
+import collections
 import os
 from typing import List, Tuple, Union, Dict, Any
 import jsonlines
 
+
+def map_nested(ob, func):
+    if isinstance(ob, dict):
+        return {k: map_nested(v, func) for k, v in ob.items()}
+    elif isinstance(ob, list):
+        return [map_nested(v, func) for v in ob]
+    else:
+        return func(ob)
+    
 
 class Logger:
     """Generic logger class for RL experimenting. 
@@ -26,7 +36,8 @@ class Logger:
             log_value (float): Value of the logged parameter
             step (int): Step index
         """
-        self._data_file.write({"step": step, log_name: log_value})
+        log_value_ = map_nested(log_value, lambda x: x.tolist() if hasattr(x, "tolist") else x)
+        self._data_file.write({"step": step, log_name: log_value_})
 
     def log_hparams(self, hparams: Dict[str, Union[bool, str, float, int]]):
         """Log a hyperparameters of the run
