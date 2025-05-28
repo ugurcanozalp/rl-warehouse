@@ -1,0 +1,277 @@
+
+from typing import Iterator, List, Tuple, Callable, Any
+from argparse import ArgumentParser
+
+import random
+import math
+import numpy as np
+import torch as th
+from torch.optim import Adam, AdamW, Optimizer
+
+from ..agent import Agent
+from ..nets import probabilistic_policy_map, probabilistic_qvalue_map
+
+
+class DSTAC(Agent):
+    
+    """Stochastic Actor Critic with double critic. 
+    """
+    
+    def __init__(self, 
+        pi_net: str = "continuous_mlp2", 
+        q_net: str = "continuous_mlp2",
+        autotune: bool = True, 
+        dropout_bootstrap: bool = True, 
+        target_entropy: float = -4, 
+        gamma: float = 0.99, 
+        alpha: float = 0.2, 
+        beta: float = 0.5, 
+        dropout: float = 0.0, 
+        tau: float = 0.005, 
+        batch_per_step: int = 1, 
+        policy_delay: int = 1, 
+        pi_lr: float = 3e-4, 
+        q_lr: float = 1e-3, 
+        batch_size: int = 256, 
+        **memory_kwargs
+    ):
+        super().__init__(**memory_kwargs)
+        # hyperparameters
+        self._gamma = gamma
+        self._autotune = autotune
+        self._dropout_bootstrap = dropout_bootstrap
+        self._target_entropy = target_entropy
+        self._alpha = alpha
+        self._beta = beta
+        self._dropout = dropout
+        self._tau = tau
+        self._batch_per_step = batch_per_step
+        self._policy_delay = policy_delay
+        self._batch_size = batch_size 
+        self._q_lr = q_lr
+        self._pi_lr = pi_lr
+        # networks
+        self._pi = probabilistic_policy_map[pi_net](dropout=self._dropout, **self.env_info).to(self._device)
+        self._q1 = probabilistic_qvalue_map[q_net](dropout=self._dropout, **self.env_info).to(self._device)
+        self._q1_target = probabilistic_qvalue_map[q_net](dropout=self._dropout, **self.env_info).to(self._device)
+        self._q2 = probabilistic_qvalue_map[q_net](dropout=self._dropout, **self.env_info).to(self._device)
+        self._q2_target = probabilistic_qvalue_map[q_net](dropout=self._dropout, **self.env_info).to(self._device)        
+        if not self._dropout_bootstrap:
+            print("Dropout is deactivated for target critic network. ")
+            self._q1_target.eval() # eval mode deactivates dropout
+            self._q2_target.eval() # eval mode deactivates dropout
+        # no grad for target networks
+        for param in self._q1_target.parameters():
+            param.requires_grad = False
+        for param in self._q2_target.parameters():
+            param.requires_grad = False            
+        self._hard_update(self._q1, self._q1_target)
+        self._hard_update(self._q2, self._q2_target)
+        # optimizers
+        self._construct_optimizers()
+        
+    @property
+    def extra_fields(self):
+        """STAC algo do not need extra fields
+        """
+        return ()
+
+    @property
+    def derived_fields(self):
+        """There is no derived field of STAC algorithm. 
+        """
+        return ()
+    
+    def step_torch(self, observation: th.Tensor, exploit: bool = False):
+        distr = self._pi(observation)
+        if exploit:
+            action = distr.rsample((10, )).mean(dim=0) # averaged action
+        else:
+            action = distr.rsample()
+        return action, ()
+
+    @th.no_grad()
+    def step(self, observation: np.ndarray, exploit: bool = False):
+        if self._total_env_interactions < self._start_steps:
+            action = None
+        else:
+            observation_ = th.from_numpy(observation).unsqueeze(0).float().to(self.device)
+            action_, _ = self.step_torch(observation_, exploit=exploit)
+            action = action_.squeeze(0).cpu().numpy()
+        return action, ()
+
+    def value_torch(self, observation: th.Tensor):
+        distr = self._pi(observation)
+        action_cloud = distr.rsample((10, ))
+        entropy = - distr.log_prob(action_cloud).mean(dim=0) # entropy by sampling 
+        if self._pi.independent_actions: 
+            entropy = entropy.sum(dim=-1)
+        observation_cloud = th.stack(10*[observation], dim=0)
+        q1_dist = self._q1(observation_cloud, action_cloud)
+        q2_dist = self._q1(observation_cloud, action_cloud)
+        value = 0.5*(q1_dist.mean.mean(dim=0) + q2_dist.mean.mean(dim=0)).squeeze(-1) + self._alpha * entropy
+        if self._autotune: # correct value 
+            value = value - 1/(1-self._gamma) * self._alpha * self._target_entropy 
+        else:
+            value = value - 1/(1-self._gamma) * self._alpha * entropy # initial timestep entropy...
+        return value
+    
+    @th.no_grad()
+    def value(self, observation: np.ndarray):
+        observation_ = th.from_numpy(observation).unsqueeze(0).float().to(self.device)
+        value_ = self.value_torch(observation_)
+        value = value_.squeeze(0).cpu().numpy()
+        return value
+    
+    def reset(self):
+        pass
+
+    def _soft_update(self, local_model, target_model):
+        for target_param, local_param in zip(target_model.parameters(), local_model.parameters()):
+            target_param.data.copy_(self._tau*local_param.data + (1.0-self._tau)*target_param.data)
+
+    def _hard_update(self, local_model, target_model):
+        for target_param, local_param in zip(target_model.parameters(), local_model.parameters()):
+            target_param.data.copy_(local_param.data)
+
+    def learn_on_step(self):
+        for i in range(self._batch_per_step): 
+            self._total_grad_steps += 1
+            observation, action, reward, next_observation, done, truncated = self.memory.sample(self._batch_size)
+            with th.no_grad():
+                next_action_distr = self._pi(next_observation)
+                next_action = next_action_distr.sample()
+                next_entropy = - next_action_distr.log_prob(next_action)
+                if self._pi.independent_actions: 
+                    next_entropy = next_entropy.sum(dim=-1, keepdim=True)  
+                if random.random() < 0.5: # randomly select a critic network for target 
+                    next_q_distr = self._q1_target(next_observation, next_action)
+                else:
+                    next_q_distr = self._q2_target(next_observation, next_action)
+                next_value_target = (next_q_distr.mean - self._beta * next_q_distr.stddev + self._alpha * next_entropy) * done.logical_not().unsqueeze(-1)
+                q_target_sample = reward.unsqueeze(-1) + self._gamma * next_value_target 
+            # critic learning behavioral policy 
+            self._q_optim.zero_grad()
+            q1_distr = self._q1(observation, action)
+            q2_distr = self._q2(observation, action)
+            # critic update calculations
+            q1_crossentropy = - q1_distr.log_prob(q_target_sample) # batch, 1
+            q2_crossentropy = - q2_distr.log_prob(q_target_sample) # batch, 1
+            q1_loss = q1_crossentropy.mean()
+            q2_loss = q2_crossentropy.mean()
+            q_loss = q1_loss + q2_loss
+            self.log("q_loss", q_loss.item())
+            self.log("q1_loss", q1_loss.item())
+            self.log("q2_loss", q2_loss.item())
+            #
+            self.log("q1_avg", q1_distr.mean.mean().item())
+            self.log("q1_std_avg", q1_distr.stddev.mean().item())
+            self.log("q2_avg", q1_distr.mean.mean().item())
+            self.log("q2_std_avg", q1_distr.stddev.mean().item())
+            #
+            q_loss.backward()
+            self._q_optim.step()
+            self._soft_update(self._q1, self._q1_target)
+            self._soft_update(self._q2, self._q2_target)
+            # on-policy updates
+            if (i+1) % self._policy_delay == 0:
+                self._pi_optim.zero_grad()
+                action_distr = self._pi(observation)
+                action_onpolicy = action_distr.rsample()
+                pi_entropy = - action_distr.log_prob(action_onpolicy)
+                if self._pi.independent_actions: 
+                    pi_entropy = pi_entropy.sum(dim=-1, keepdim=True)
+                if random.random() < 0.5: # randomly select a critic network policy update
+                    q_onpolicy_distr = self._q1(observation, action_onpolicy)
+                else:
+                    q_onpolicy_distr = self._q2(observation, action_onpolicy)
+                q_onpolicy = q_onpolicy_distr.mean - self._beta * q_onpolicy_distr.stddev
+                pi_obj = - (q_onpolicy + self._alpha * pi_entropy)
+                pi_loss = pi_obj.mean()
+                self.log("pi_loss", pi_loss.item())
+                self.log("pi_entropy_avg", pi_entropy.mean().item())
+                self.log("q_onpolicy_avg", q_onpolicy.mean().item())
+                self.log("q_std_onpolicy_avg", q_onpolicy_distr.stddev.mean().item())
+                pi_loss.backward()
+                self._pi_optim.step()
+                # if autotune
+                if self._autotune:
+                    pi_entropy_ = pi_entropy.mean().cpu().item()
+                    self._alpha = self._alpha * math.exp(self._q_lr * self._alpha * ( self._target_entropy - pi_entropy_))
+                    self.log("alpha", self._alpha)
+
+    @property
+    def hparams(self):
+        param = {
+            "autotune": self._autotune, 
+            "target_entropy": self._target_entropy, 
+            "gamma": self._gamma, 
+            "alpha": self._alpha, 
+            "beta": self._beta, 
+            "dropout": self._dropout, 
+            "tau": self._tau, 
+            "batch_per_step": self._batch_per_step, 
+            "policy_delay": self._policy_delay, 
+            "batch_size": self._batch_size, 
+            "q_lr": self._q_lr, 
+            "pi_lr": self._pi_lr, 
+        }
+        return param
+    
+    def _construct_optimizers(self):
+        """Initialize Adam optimizer."""
+        self._pi_optim = AdamW(self._pi.parameters(), lr=self._pi_lr)
+        # q_optim = Adam(self._q1.parameters(), lr=self._q_lr)
+        self._q_optim = AdamW(
+            [{'params': self._q1.parameters()}, {'params': self._q2.parameters()}], 
+            lr=self._q_lr
+        )
+
+    def train_mode(self):
+        self._q1.train()
+        self._q2.train()
+        self._pi.train()
+
+    def eval_mode(self):
+        self._q1.eval()
+        self._q2.eval()
+        self._pi.eval()
+
+    def compute_function(self,
+        observation, 
+        action, 
+        reward, 
+        next_observation, 
+        done, 
+        truncated, 
+    ):
+        return ()
+
+    def experiment_end(self): 
+        pass
+    
+    @staticmethod
+    def add_model_specific_args(parent_parser):
+        parser = ArgumentParser(parents=[parent_parser], add_help=False)
+        parser = Agent.add_model_specific_args(parser)
+        parser.add_argument("--pi_net", type=str, default="continuous_mlp2")
+        parser.add_argument("--q_net", type=str, default="continuous_mlp2")
+        parser.add_argument("--autotune", action="store_true", default=False)
+        parser.add_argument('--no-autotune', dest="autotune", action="store_false")
+        parser.add_argument("--dropout-bootstrap", action="store_true", default=True)
+        parser.add_argument("--no-dropout-bootstrap", dest="dropout_bootstrap", action="store_false")
+        parser.add_argument("--target_entropy", type=float, default=-4)
+        parser.add_argument("--gamma", type=float, default=0.99)
+        parser.add_argument("--alpha", type=float, default=0.2)
+        parser.add_argument("--beta", type=float, default=0.5)
+        parser.add_argument("--dropout", type=float, default=0.0)
+        parser.add_argument("--tau", type=float, default=0.005)
+        parser.add_argument("--batch_per_step", type=int, default=1)
+        parser.add_argument("--policy_delay", type=int, default=1)
+        parser.add_argument("--pi_lr", type=float, default=3e-4)
+        parser.add_argument("--q_lr", type=float, default=1e-3)
+        parser.add_argument("--batch_size", type=int, default=256)
+        return parser
+
+if __name__=="__main__":
+    pass
