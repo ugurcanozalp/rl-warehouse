@@ -1,6 +1,7 @@
 
 from typing import Iterator, List, Tuple, Callable, Any
 from argparse import ArgumentParser
+import os
 
 import math
 import numpy as np
@@ -11,23 +12,23 @@ from ..agent import Agent
 from ..nets import policy_map, quantile_qvalue_map
 
 
-DEFAULT_ARMS = [-1, -0.75, -0.5, -0.25, 0, 0.25, 0.5, 0.75, 1]
+DEFAULT_ARMS = [-1, -0.5, 0] # , 0.5, 1
 
 class ExpWeights(object):
     
     def __init__(self, 
                  arms: List = DEFAULT_ARMS,
-                 lr: float = 0.2,
-                 window: int = 10, 
+                 lr: float = 0.1,
+                 window: int = 5, 
                  decay: float = 0.9,
                  init: float = 0.0,
                  use_std: bool = True) -> None:
         """Initialize bandit.
 
         Args:
-            arms (List, optional): Arm values. Defaults to [-1, -0.75, -0.5, -0.25, 0, 0.25, 0.5, 0.75, 1].
-            lr (float, optional): Learning rate. Defaults to 0.2.
-            window (int, optional): Window to normalize over. Defaults to 10.
+            arms (List, optional): Arm values. Defaults to [-1, -0.5, 0].
+            lr (float, optional): Learning rate. Defaults to 0.1.
+            window (int, optional): Window to normalize over. Defaults to 5.
             decay (float, optional): Decay rate for probability. Defaults to 0.9.
             init (float, optional): Weight initialization. Defaults to 0.0.
             use_std (bool, optional): Use std to normalize feedback. Defaults to True.
@@ -115,7 +116,7 @@ class TOP(Agent):
         batch_per_step: int = 1, 
         policy_delay: int = 1,
         pi_lr: float = 3e-4,
-        q_lr: float = 1e-3, 
+        q_lr: float = 5e-4, 
         bandit_lr: float = 0.1, 
         batch_size: int = 256, 
         **memory_kwargs
@@ -156,7 +157,19 @@ class TOP(Agent):
             param.requires_grad = False
         # optimizers
         self._construct_optimizers()
-        
+
+    def save_ckpt(self, path: os.PathLike):
+        th.save(self._pi.state_dict(), os.path.join(path, "pi.pth"))
+        th.save(self._q1.state_dict(), os.path.join(path, "q1.pth"))
+        th.save(self._q2.state_dict(), os.path.join(path, "q2.pth"))
+
+    def load_ckpt(self, path: os.PathLike):
+        self._pi.load_state_dict(th.load(os.path.join(path, "pi.pth"), map_location=self.device))
+        self._q1.load_state_dict(th.load(os.path.join(path, "q1.pth"), map_location=self.device))
+        self._q2.load_state_dict(th.load(os.path.join(path, "q2.pth"), map_location=self.device))
+        self._hard_update(self._q1, self._q1_target)
+        self._hard_update(self._q2, self._q2_target)
+
     @property
     def hparams(self):
         param = {
@@ -213,12 +226,15 @@ class TOP(Agent):
         value = value_.squeeze(0).cpu().numpy()
         return value
 
-    def reset(self):
+    def episode_end(self):
         if self._prev_episode_score is not None:
             self.bandit.update_dists(self._episode_score - self._prev_episode_score)
         self._beta = self.bandit.sample() # sample optimism
         self._prev_episode_score = self._episode_score
 
+    def reset(self):
+        pass
+    
     def _soft_update(self, local_model, target_model):
         for target_param, local_param in zip(target_model.parameters(), local_model.parameters()):
             target_param.data.copy_(self._tau*local_param.data + (1.0-self._tau)*target_param.data)
@@ -258,7 +274,7 @@ class TOP(Agent):
             self.log("wd", wd.item())
             self.log("beta", self._beta)
             # train policy one time
-            if (i+1) % self._policy_delay == 0:
+            if (self._total_grad_steps+1) % self._policy_delay == 0:
                 self._pi_optim.zero_grad()
                 action_imaginary = self._pi(observation)
                 q1_onpolicy_qtls = self._q1(observation, action_imaginary)
@@ -274,9 +290,9 @@ class TOP(Agent):
 
     def _construct_optimizers(self):
         """Initialize Adam optimizer."""
-        self._pi_optim = AdamW(self._pi.parameters(), lr=self._pi_lr)
+        self._pi_optim = Adam(self._pi.parameters(), lr=self._pi_lr)
         # q_optim = Adam(self._q1.parameters(), lr=self._q_lr)
-        self._q_optim = AdamW(
+        self._q_optim = Adam(
             [{'params': self._q1.parameters()}, {'params': self._q2.parameters()}], 
             lr=self._q_lr
         )
@@ -338,9 +354,9 @@ class TOP(Agent):
         parser.add_argument("--num_quantiles", type=int, default=100)
         parser.add_argument("--tau", type=float, default=0.005)
         parser.add_argument("--batch_per_step", type=int, default=1)
-        parser.add_argument("--target_update_interval", type=int, default=1)
+        parser.add_argument("--policy_delay", type=int, default=1)
         parser.add_argument("--pi_lr", type=float, default=3e-4)
-        parser.add_argument("--q_lr", type=float, default=1e-3)
+        parser.add_argument("--q_lr", type=float, default=5e-4)
         parser.add_argument("--batch_size", type=int, default=256)
         return parser
 

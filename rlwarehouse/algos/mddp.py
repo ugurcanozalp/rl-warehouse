@@ -1,6 +1,7 @@
 
 from typing import Iterator, List, Tuple, Callable, Any
 from argparse import ArgumentParser
+import os 
 
 import math
 import numpy as np
@@ -63,7 +64,15 @@ class MDDP(Agent):
         # self._model_hessian = th.vmap(th.func.hessian(lambda x, u: self._model(x, u).mean, argnums=(0, 1)), in_dims=(0, 0))
         # optimizers
         self._construct_optimizers()
-        
+
+    def save_ckpt(self, path: os.PathLike):
+        th.save(self._model.state_dict(), os.path.join(path, "model.pth"))
+        th.save(self._r.state_dict(), os.path.join(path, "r.pth"))
+
+    def load_ckpt(self, path: os.PathLike):
+        self._model.load_state_dict(th.load(os.path.join(path, "model.pth"), map_location=self.device))
+        self._r.load_state_dict(th.load(os.path.join(path, "r.pth"), map_location=self.device))
+
     @property
     def extra_fields(self):
         """MDDP algo do not need extra fields
@@ -90,6 +99,9 @@ class MDDP(Agent):
         self._horizon_timer += 1
         action = self._u_plan[self._horizon_timer-1] #.clip(self._u_min, self._u_max) # clip the plan. 
         return action, ()
+
+    def episode_end(self):
+        pass
 
     @th.no_grad()
     def step(self, observation: np.ndarray, exploit: bool = False):
@@ -253,8 +265,8 @@ class MDDP(Agent):
     
     def _construct_optimizers(self):
         """Initialize Adam optimizer."""
-        self._r_optim = AdamW(self._r.parameters(), lr=self._r_lr)
-        self._model_optim = AdamW(self._model.parameters(), lr=self._model_lr)
+        self._r_optim = Adam(self._r.parameters(), lr=self._r_lr)
+        self._model_optim = Adam(self._model.parameters(), lr=self._model_lr)
 
     def train_mode(self):
         self._r.train()

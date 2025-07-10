@@ -1,6 +1,7 @@
 
 from typing import Iterator, List, Tuple, Callable, Any
 from argparse import ArgumentParser
+import os 
 
 import random
 import math
@@ -32,7 +33,7 @@ class TQC(Agent):
         batch_per_step: int = 1, 
         policy_delay: int = 1, 
         pi_lr: float = 3e-4, 
-        q_lr: float = 1e-3, 
+        q_lr: float = 5e-4, 
         batch_size: int = 256, 
         **memory_kwargs
     ):
@@ -68,7 +69,18 @@ class TQC(Agent):
             self._qs_target.append(q_target)
         # optimizers
         self._construct_optimizers()
-        
+
+    def save_ckpt(self, path: os.PathLike):
+        th.save(self._pi.state_dict(), os.path.join(path, "pi.pth"))
+        for k in range(self._num_ensemble):
+            th.save(self._qs[k].state_dict(), os.path.join(path, "q"+str(k)+".pth"))
+
+    def load_ckpt(self, path: os.PathLike):
+        self._pi.load_state_dict(th.load(os.path.join(path, "pi.pth"), map_location=self.device))
+        for k in range(self._num_ensemble):
+            self._qs[k].load_state_dict(th.load(os.path.join(path, "q"+str(k)+".pth"), map_location=self.device))
+            self._hard_update(self._qs[k], self._qs_target[k])
+
     @property
     def extra_fields(self):
         """TQC algo do not need extra fields
@@ -124,6 +136,9 @@ class TQC(Agent):
         value = value_.squeeze(0).cpu().numpy()
         return value
     
+    def episode_end(self):
+        pass
+
     def reset(self):
         pass
 
@@ -167,10 +182,13 @@ class TQC(Agent):
             qvalue_loss.backward()
             self._q_optim.step()
             self.log("q_loss", qvalue_loss.item())
+            self.log("q_avg", qvalue_est.mean(dim=-1).mean().item())
+            self.log("q_std_avg", qvalue_est.std(dim=-1).mean().item())
+            self.log("q_epistemic_std", qvalue_est.mean(dim=-1).std(dim=-1).mean())            
             for k in range(self._num_ensemble):
                 self._soft_update(self._qs[k], self._qs_target[k])
             # train policy one time
-            if (i+1) % self._policy_delay == 0:
+            if (self._total_grad_steps+1) % self._policy_delay == 0:
                 self._pi_optim.zero_grad()
                 action_distr = self._pi(observation)
                 action_imaginary = action_distr.rsample()
@@ -189,8 +207,8 @@ class TQC(Agent):
                 self._pi_optim.step()
                 self.log("pi_loss", pi_loss.item())
                 self.log("pi_entropy_avg", entropy.mean().item())
-                self.log("q_onpolicy_avg", q_mean_onpolicy.mean().item())
-                self.log("q_std_onpolicy_avg", q_std_onpolicy.mean().item())
+                self.log("q_avg_onpolicy", q_mean_onpolicy.mean().item())
+                self.log("q_std_avg_onpolicy", q_std_onpolicy.mean().item())
                 # if autotune
                 if self._autotune:
                     entropy_ = entropy.mean().cpu().item()
@@ -217,8 +235,8 @@ class TQC(Agent):
     
     def _construct_optimizers(self):
         """Initialize Adam optimizer."""
-        self._pi_optim = AdamW(self._pi.parameters(), lr=self._pi_lr)
-        self._q_optim = AdamW([{'params': q.parameters()} for q in self._qs], lr=self._q_lr)
+        self._pi_optim = Adam(self._pi.parameters(), lr=self._pi_lr)
+        self._q_optim = Adam([{'params': q.parameters()} for q in self._qs], lr=self._q_lr)
 
     def train_mode(self):
         for q in self._qs:
@@ -276,7 +294,7 @@ class TQC(Agent):
         parser.add_argument("--policy_delay", type=int, default=1)
         parser.add_argument("--target_update_interval", type=int, default=1)
         parser.add_argument("--pi_lr", type=float, default=3e-4)
-        parser.add_argument("--q_lr", type=float, default=1e-3)
+        parser.add_argument("--q_lr", type=float, default=5e-4)
         parser.add_argument("--batch_size", type=int, default=256)
         return parser
 

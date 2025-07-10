@@ -1,6 +1,7 @@
 
 from typing import Iterator, List, Tuple, Callable, Any
 from argparse import ArgumentParser
+import os 
 
 import numpy as np
 import torch as th
@@ -23,7 +24,7 @@ class PPO(Agent):
         steps_per_rollout: int = 2048, 
         clip_ratio: int = 0.2, 
         pi_lr: float = 3e-4,
-        v_lr: float = 3e-4, 
+        v_lr: float = 5e-4, 
         vf_coef: float = 0.5, 
         max_grad_norm: float = 0.5, 
         batch_size: int = 256, 
@@ -52,6 +53,14 @@ class PPO(Agent):
         self._v = value_map[v_net](**self.env_info).to(self._device)
         # optimizers
         self._construct_optimizers()
+
+    def save_ckpt(self, path: os.PathLike):
+        th.save(self._pi.state_dict(), os.path.join(path, "pi.pth"))
+        th.save(self._v.state_dict(), os.path.join(path, "v.pth"))
+
+    def load_ckpt(self, path: os.PathLike):
+        self._pi.load_state_dict(th.load(os.path.join(path, "pi.pth"), map_location=self.device))
+        self._v.load_state_dict(th.load(os.path.join(path, "v.pth"), map_location=self.device))
 
     @property
     def hparams(self):
@@ -113,7 +122,10 @@ class PPO(Agent):
         value_ = self.value_torch(observation_)
         value = value_.squeeze(0).cpu().numpy()
         return value
-            
+
+    def episode_end(self):
+        pass
+
     def reset(self):
         pass
 
@@ -162,8 +174,8 @@ class PPO(Agent):
 
     def _construct_optimizers(self):
         """Initialize Adam optimizer."""
-        self._pi_optim = AdamW(self._pi.parameters(), lr=self._pi_lr)
-        self._v_optim = AdamW(self._v.parameters(), lr=self._v_lr)
+        self._pi_optim = Adam(self._pi.parameters(), lr=self._pi_lr)
+        self._v_optim = Adam(self._v.parameters(), lr=self._v_lr)
 
     def train_mode(self):
         self._v.train()
@@ -224,7 +236,7 @@ class PPO(Agent):
         parser.add_argument("--steps_per_rollout", type=int, default=2048) 
         parser.add_argument("--clip_ratio", type=int, default=0.4) 
         parser.add_argument("--pi_lr", type=float, default=3e-4)
-        parser.add_argument("--v_lr", type=float, default=3e-4)
+        parser.add_argument("--v_lr", type=float, default=5e-4)
         parser.add_argument("--vf_coef", type=float, default=0.5)
         parser.add_argument("--max_grad_norm", type=float, default=0.5)
         parser.add_argument("--batch_size", type=int, default=256)

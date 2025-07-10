@@ -1,6 +1,7 @@
 
 from typing import Iterator, List, Tuple, Callable, Any
 from argparse import ArgumentParser
+import os 
 
 import math
 import numpy as np
@@ -25,7 +26,7 @@ class SAC(Agent):
         batch_per_step: int = 1, 
         policy_delay: int = 1,
         pi_lr: float = 3e-4,
-        q_lr: float = 1e-3, 
+        q_lr: float = 5e-4, 
         batch_size: int = 256, 
         **memory_kwargs
     ):
@@ -57,7 +58,19 @@ class SAC(Agent):
             param.requires_grad = False
         # optimizers
         self._construct_optimizers()
-        
+
+    def save_ckpt(self, path: os.PathLike):
+        th.save(self._pi.state_dict(), os.path.join(path, "pi.pth"))
+        th.save(self._q1.state_dict(), os.path.join(path, "q1.pth"))
+        th.save(self._q2.state_dict(), os.path.join(path, "q2.pth"))
+
+    def load_ckpt(self, path: os.PathLike):
+        self._pi.load_state_dict(th.load(os.path.join(path, "pi.pth"), map_location=self.device))
+        self._q1.load_state_dict(th.load(os.path.join(path, "q1.pth"), map_location=self.device))
+        self._q2.load_state_dict(th.load(os.path.join(path, "q2.pth"), map_location=self.device))
+        self._hard_update(self._q1, self._q1_target)
+        self._hard_update(self._q2, self._q2_target)
+
     @property
     def hparams(self):
         param = {
@@ -127,6 +140,9 @@ class SAC(Agent):
         value = value_.squeeze(0).cpu().numpy()
         return value
 
+    def episode_end(self):
+        pass
+
     def reset(self):
         pass
 
@@ -170,7 +186,7 @@ class SAC(Agent):
             self.log("q_avg", 0.5*(qvalue1_est+qvalue2_est).mean().item())
             self.log("q_std_avg", q_std.mean().item())
             # train policy one time
-            if (i+1) % self._policy_delay == 0:
+            if (self._total_grad_steps+1) % self._policy_delay == 0:
                 self._pi_optim.zero_grad()
                 action_distr = self._pi(observation)
                 action_imaginary = action_distr.rsample()
@@ -187,8 +203,8 @@ class SAC(Agent):
                 self._pi_optim.step()
                 self.log("pi_loss", pi_loss.item())
                 self.log("pi_entropy_avg", entropy.mean().item())
-                self.log("q_onpolicy_avg", q_mean_onpolicy.mean().item())
-                self.log("q_std_onpolicy_avg", q_std_onpolicy.mean().item())
+                self.log("q_avg_onpolicy", q_mean_onpolicy.mean().item())
+                self.log("q_std_avg_onpolicy", q_std_onpolicy.mean().item())
                 # if autotune
                 if self._autotune:
                     entropy_ = entropy.mean().cpu().item()
@@ -197,9 +213,9 @@ class SAC(Agent):
 
     def _construct_optimizers(self):
         """Initialize Adam optimizer."""
-        self._pi_optim = AdamW(self._pi.parameters(), lr=self._pi_lr)
+        self._pi_optim = Adam(self._pi.parameters(), lr=self._pi_lr)
         # q_optim = Adam(self._q1.parameters(), lr=self._q_lr)
-        self._q_optim = AdamW(
+        self._q_optim = Adam(
             [{'params': self._q1.parameters()}, {'params': self._q2.parameters()}], 
             lr=self._q_lr
         )
@@ -241,9 +257,9 @@ class SAC(Agent):
         parser.add_argument("--dropout", type=float, default=0.0)        
         parser.add_argument("--tau", type=float, default=0.005)
         parser.add_argument("--batch_per_step", type=int, default=1)
-        parser.add_argument("--target_update_interval", type=int, default=1)
+        parser.add_argument("--policy_delay", type=int, default=1)
         parser.add_argument("--pi_lr", type=float, default=3e-4)
-        parser.add_argument("--q_lr", type=float, default=1e-3)
+        parser.add_argument("--q_lr", type=float, default=5e-4)
         parser.add_argument("--batch_size", type=int, default=256)
         return parser
 

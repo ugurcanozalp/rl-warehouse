@@ -10,13 +10,12 @@ import torch as th
 from torch.optim import Adam, AdamW, Optimizer
 
 from ..agent import Agent
-from ..nets import probabilistic_policy_map, qvalue_map
+from ..nets import probabilistic_policy_map, probabilistic_qvalue_map
 
 
-class REDQ(Agent):
+class ESTAC(Agent):
     
-    """Randomized Ensembled Double Q-Learning
-    https://arxiv.org/abs/2101.05982
+    """Ensemble Stochastic Actor Critic
     """
     
     def __init__(self, 
@@ -26,8 +25,9 @@ class REDQ(Agent):
         target_entropy: float = -4, 
         gamma: float = 0.99, 
         alpha: float = 0.2, 
+        beta: float = 0.5, 
         num_ensemble: int = 5, 
-        num_subset: int = 2, 
+        dropout: float = 0.0, 
         tau: float = 0.005, 
         batch_per_step: int = 1, 
         policy_delay: int = 1, 
@@ -37,14 +37,14 @@ class REDQ(Agent):
         **memory_kwargs
     ):
         super().__init__(**memory_kwargs)
-        assert num_ensemble >= num_subset, "num_ensemble must be greater than or equal to num_subset"
         # hyperparameters
         self._gamma = gamma
         self._autotune = autotune
         self._target_entropy = target_entropy
         self._alpha = alpha
+        self._beta = beta
         self._num_ensemble = num_ensemble
-        self._num_subset = num_subset
+        self._dropout = dropout
         self._tau = tau
         self._batch_per_step = batch_per_step
         self._policy_delay = policy_delay
@@ -52,12 +52,12 @@ class REDQ(Agent):
         self._q_lr = q_lr
         self._pi_lr = pi_lr
         # networks
-        self._pi = probabilistic_policy_map[pi_net](**self.env_info).to(self._device)
+        self._pi = probabilistic_policy_map[pi_net](dropout=self._dropout, **self.env_info).to(self._device)
         self._qs = []
         self._qs_target = []
         for _ in range(self._num_ensemble):
-            q = qvalue_map[q_net](**self.env_info).to(self._device)
-            q_target = qvalue_map[q_net](**self.env_info).to(self._device)
+            q = probabilistic_qvalue_map[q_net](dropout=self._dropout, **self.env_info).to(self._device)
+            q_target = probabilistic_qvalue_map[q_net](dropout=self._dropout, **self.env_info).to(self._device)
             # no grad for target networks
             for param in q_target.parameters():
                 param.requires_grad = False
@@ -80,13 +80,13 @@ class REDQ(Agent):
 
     @property
     def extra_fields(self):
-        """REDQ algo do not need extra fields
+        """STAC algo do not need extra fields
         """
         return ()
 
     @property
     def derived_fields(self):
-        """There is no derived field of DROQ algorithm. 
+        """There is no derived field of STAC algorithm. 
         """
         return ()
     
@@ -117,8 +117,8 @@ class REDQ(Agent):
         observation_cloud = th.stack(10*[observation], dim=0)
         value = 0
         for q in self._qs:
-            qvalues_ = q(observation_cloud, action_cloud)
-            value_ = qvalues_.mean(dim=0).squeeze(-1) + self._alpha * entropy
+            q_distr_i = q(observation_cloud, action_cloud)
+            value_ = q_distr_i.mean.mean(dim=0).squeeze(-1) + self._alpha * entropy
             value += value_ / self._num_ensemble  # averaged
         if self._autotune: # correct value 
             value = value - 1/(1-self._gamma) * self._alpha * self._target_entropy 
@@ -156,54 +156,60 @@ class REDQ(Agent):
                 next_action = next_action_distr.sample()
                 next_entropy = - next_action_distr.log_prob(next_action)
                 if self._pi.independent_actions: 
-                    next_entropy = next_entropy.sum(dim=-1, keepdim=True)
-                next_q_values_list = []
-                for m in random.sample(range(self._num_ensemble), 2):
-                    qtarget = self._qs_target[m]
-                    next_qvalue_ = qtarget(next_observation, next_action)
-                    next_q_values_list.append(next_qvalue_)
-                next_q_values = th.stack(next_q_values_list, dim=0)
-                next_qvalue_target = next_q_values.min(dim=0).values + self._alpha * next_entropy
-                qvalue = reward.unsqueeze(-1) + self._gamma * next_qvalue_target * done.logical_not().unsqueeze(-1)
-            # update critics
+                    next_entropy = next_entropy.sum(dim=-1, keepdim=True)  
+                m = random.randrange(self._num_ensemble) # random critic selected
+                next_q_distr = self._qs_target[m](next_observation, next_action)
+                next_value = (next_q_distr.mean - self._beta * next_q_distr.stddev + self._alpha * next_entropy) * done.logical_not().unsqueeze(-1)
+                q_target = reward.unsqueeze(-1) + self._gamma * next_value
+            # critic learning behavioral policy 
             self._q_optim.zero_grad()
-            qvalue_loss = 0
+            q_loss = 0
+            q_avg = 0
+            q_std_avg = 0
+            q_means_list = []
+            q_stds_list = []
             for q in self._qs:
-                qvalue_est_ = q(observation, action)
-                qvalue_loss += 0.5*th.nn.functional.mse_loss(qvalue_est_, qvalue) 
-            qvalue_loss.backward()
+                q_distr_i = q(observation, action)
+                q_ce = - q_distr_i.log_prob(q_target) 
+                q_loss += q_ce.mean()
+                q_means_list.append(q_distr_i.mean)
+                q_stds_list.append(q_distr_i.stddev)
+            q_avg = th.concat(q_means_list, dim=-1).mean(dim=-1).mean()
+            q_std_avg = th.concat(q_stds_list, dim=-1).mean(dim=-1).mean()
+            q_epistemic_std = th.concat(q_means_list, dim=-1).std(dim=-1).mean()
+            self.log("q_loss", q_loss.item())
+            self.log("q_avg", q_avg.item())
+            self.log("q_std_avg", q_std_avg.item())
+            self.log("q_epistemic_std", q_epistemic_std.mean().item())
+            q_loss.backward()
             self._q_optim.step()
-            self.log("q_loss", qvalue_loss.item())
             for k in range(self._num_ensemble):
                 self._soft_update(self._qs[k], self._qs_target[k])
-            # train policy one time
+            # on-policy updates
             if (self._total_grad_steps+1) % self._policy_delay == 0:
                 self._pi_optim.zero_grad()
                 action_distr = self._pi(observation)
-                action_imaginary = action_distr.rsample()
-                entropy = - action_distr.log_prob(action_imaginary)
+                action_onpolicy = action_distr.rsample()
+                pi_entropy = - action_distr.log_prob(action_onpolicy)
                 if self._pi.independent_actions: 
-                    entropy = entropy.sum(dim=-1, keepdim=True)
-                qs_onpolicy_list = []
-                for q in self._qs:
-                    q_onpolicy_ = q(observation, action_imaginary)
-                    qs_onpolicy_list.append(q_onpolicy_)
-                qs_onpolicy = th.stack(qs_onpolicy_list, dim=0)
-                q_mean_onpolicy = qs_onpolicy.mean(dim=0)
-                q_std_onpolicy = qs_onpolicy.std(dim=0)
-                pi_loss = -(q_mean_onpolicy + self._alpha * entropy).mean()
+                    pi_entropy = pi_entropy.sum(dim=-1, keepdim=True)
+                m = random.randrange(self._num_ensemble) # random critic selected.
+                q_onpolicy_distr = self._qs[m](observation, action_onpolicy)
+                q_onpolicy = q_onpolicy_distr.mean - self._beta * q_onpolicy_distr.stddev
+                pi_obj = - (q_onpolicy + self._alpha * pi_entropy) 
+                pi_loss = pi_obj.mean()
+                self.log("pi_loss", pi_loss.item())
+                self.log("pi_entropy_avg", pi_entropy.mean().item())
+                self.log("q_avg_onpolicy", q_onpolicy_distr.mean.mean().item())
+                self.log("q_std_avg_onpolicy", q_onpolicy_distr.stddev.mean().item())
                 pi_loss.backward()
                 self._pi_optim.step()
-                self.log("pi_loss", pi_loss.item())
-                self.log("pi_entropy_avg", entropy.mean().item())
-                self.log("q_onpolicy_avg", q_mean_onpolicy.mean().item())
-                self.log("q_std_onpolicy_avg", q_std_onpolicy.mean().item())
                 # if autotune
                 if self._autotune:
-                    entropy_ = entropy.mean().cpu().item()
-                    self._alpha = self._alpha * math.exp(self._q_lr * ( self._target_entropy - entropy_))
+                    pi_entropy_ = pi_entropy.mean().cpu().item()
+                    self._alpha = self._alpha * math.exp(self._q_lr * self._alpha * ( self._target_entropy - pi_entropy_))
                     self.log("alpha", self._alpha)
-
+    
     @property
     def hparams(self):
         param = {
@@ -211,10 +217,12 @@ class REDQ(Agent):
             "target_entropy": self._target_entropy, 
             "gamma": self._gamma, 
             "alpha": self._alpha, 
+            "beta": self._beta, 
             "num_ensemble": self._num_ensemble, 
-            "num_subset": self._num_subset, 
+            "dropout": self._dropout, 
             "tau": self._tau, 
             "batch_per_step": self._batch_per_step, 
+            "policy_delay": self._policy_delay, 
             "batch_size": self._batch_size, 
             "q_lr": self._q_lr, 
             "pi_lr": self._pi_lr, 
@@ -260,12 +268,12 @@ class REDQ(Agent):
         parser.add_argument("--target_entropy", type=float, default=-4)
         parser.add_argument("--gamma", type=float, default=0.99)
         parser.add_argument("--alpha", type=float, default=0.2)
+        parser.add_argument("--beta", type=float, default=0.5)
         parser.add_argument("--num_ensemble", type=int, default=5)
-        parser.add_argument("--num_subset", type=int, default=2)
+        parser.add_argument("--dropout", type=float, default=0.0)
         parser.add_argument("--tau", type=float, default=0.005)
         parser.add_argument("--batch_per_step", type=int, default=1)
         parser.add_argument("--policy_delay", type=int, default=1)
-        parser.add_argument("--target_update_interval", type=int, default=1)
         parser.add_argument("--pi_lr", type=float, default=3e-4)
         parser.add_argument("--q_lr", type=float, default=5e-4)
         parser.add_argument("--batch_size", type=int, default=256)

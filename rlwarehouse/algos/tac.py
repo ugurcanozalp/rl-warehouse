@@ -1,37 +1,39 @@
 
 from typing import Iterator, List, Tuple, Callable, Any
 from argparse import ArgumentParser
+import os
 
-import random
 import math
 import numpy as np
 import torch as th
 from torch.optim import Adam, AdamW, Optimizer
 
 from ..agent import Agent
-from ..nets import probabilistic_policy_map, probabilistic_qvalue_map
+from ..nets import probabilistic_policy_map, quantile_qvalue_map
 
 
-class DSTAC(Agent):
+class TAC(Agent):
     
-    """Stochastic Actor Critic with double critic. 
+    """Truncated Actor Critic
     """
     
     def __init__(self, 
         pi_net: str = "continuous_mlp2", 
         q_net: str = "continuous_mlp2",
-        autotune: bool = True, 
-        dropout_bootstrap: bool = True, 
+        autotune: bool = False, 
         target_entropy: float = -4, 
         gamma: float = 0.99, 
+        num_quantiles: int = 25,         
         alpha: float = 0.2, 
         beta: float = 0.5, 
-        dropout: float = 0.0, 
+        num_drop_quantiles: int = 2, 
+        pi_dropout: float = 0.0, 
+        q_dropout: float = 0.0, 
         tau: float = 0.005, 
         batch_per_step: int = 1, 
         policy_delay: int = 1, 
         pi_lr: float = 3e-4, 
-        q_lr: float = 1e-3, 
+        q_lr: float = 5e-4, 
         batch_size: int = 256, 
         **memory_kwargs
     ):
@@ -39,11 +41,13 @@ class DSTAC(Agent):
         # hyperparameters
         self._gamma = gamma
         self._autotune = autotune
-        self._dropout_bootstrap = dropout_bootstrap
         self._target_entropy = target_entropy
+        self._num_quantiles = num_quantiles
+        self._num_drop_quantiles = num_drop_quantiles
         self._alpha = alpha
         self._beta = beta
-        self._dropout = dropout
+        self._pi_dropout = pi_dropout
+        self._q_dropout = q_dropout
         self._tau = tau
         self._batch_per_step = batch_per_step
         self._policy_delay = policy_delay
@@ -51,34 +55,34 @@ class DSTAC(Agent):
         self._q_lr = q_lr
         self._pi_lr = pi_lr
         # networks
-        self._pi = probabilistic_policy_map[pi_net](dropout=self._dropout, **self.env_info).to(self._device)
-        self._q1 = probabilistic_qvalue_map[q_net](dropout=self._dropout, **self.env_info).to(self._device)
-        self._q1_target = probabilistic_qvalue_map[q_net](dropout=self._dropout, **self.env_info).to(self._device)
-        self._q2 = probabilistic_qvalue_map[q_net](dropout=self._dropout, **self.env_info).to(self._device)
-        self._q2_target = probabilistic_qvalue_map[q_net](dropout=self._dropout, **self.env_info).to(self._device)        
-        if not self._dropout_bootstrap:
-            print("Dropout is deactivated for target critic network. ")
-            self._q1_target.eval() # eval mode deactivates dropout
-            self._q2_target.eval() # eval mode deactivates dropout
+        self._pi = probabilistic_policy_map[pi_net](dropout=self._pi_dropout, **self.env_info).to(self._device)
+        self._q = quantile_qvalue_map[q_net](num_quantiles=self._num_quantiles, dropout=self._q_dropout, **self.env_info).to(self._device)
+        self._q_target = quantile_qvalue_map[q_net](num_quantiles=self._num_quantiles, dropout=self._q_dropout, **self.env_info).to(self._device)
         # no grad for target networks
-        for param in self._q1_target.parameters():
+        for param in self._q_target.parameters():
             param.requires_grad = False
-        for param in self._q2_target.parameters():
-            param.requires_grad = False            
-        self._hard_update(self._q1, self._q1_target)
-        self._hard_update(self._q2, self._q2_target)
+        self._hard_update(self._q, self._q_target)
         # optimizers
         self._construct_optimizers()
-        
+
+    def save_ckpt(self, path: os.PathLike):
+        th.save(self._pi.state_dict(), os.path.join(path, "pi.pth"))
+        th.save(self._q.state_dict(), os.path.join(path, "q.pth"))
+
+    def load_ckpt(self, path: os.PathLike):
+        self._pi.load_state_dict(th.load(os.path.join(path, "pi.pth"), map_location=self.device))
+        self._q.load_state_dict(th.load(os.path.join(path, "q.pth"), map_location=self.device))
+        self._hard_update(self._q, self._q_target)
+
     @property
     def extra_fields(self):
-        """STAC algo do not need extra fields
+        """TAC algo do not need extra fields
         """
         return ()
 
     @property
     def derived_fields(self):
-        """There is no derived field of STAC algorithm. 
+        """There is no derived field of TAC algorithm. 
         """
         return ()
     
@@ -107,9 +111,8 @@ class DSTAC(Agent):
         if self._pi.independent_actions: 
             entropy = entropy.sum(dim=-1)
         observation_cloud = th.stack(10*[observation], dim=0)
-        q1_dist = self._q1(observation_cloud, action_cloud)
-        q2_dist = self._q1(observation_cloud, action_cloud)
-        value = 0.5*(q1_dist.mean.mean(dim=0) + q2_dist.mean.mean(dim=0)).squeeze(-1) + self._alpha * entropy
+        qvalues = self._q(observation_cloud, action_cloud)
+        value = qvalues.mean(dim=0).mean(dim=-1) + self._alpha * entropy
         if self._autotune: # correct value 
             value = value - 1/(1-self._gamma) * self._alpha * self._target_entropy 
         else:
@@ -122,6 +125,9 @@ class DSTAC(Agent):
         value_ = self.value_torch(observation_)
         value = value_.squeeze(0).cpu().numpy()
         return value
+
+    def episode_end(self):
+        pass
     
     def reset(self):
         pass
@@ -144,54 +150,39 @@ class DSTAC(Agent):
                 next_entropy = - next_action_distr.log_prob(next_action)
                 if self._pi.independent_actions: 
                     next_entropy = next_entropy.sum(dim=-1, keepdim=True)  
-                if random.random() < 0.5: # randomly select a critic network for target 
-                    next_q_distr = self._q1_target(next_observation, next_action)
-                else:
-                    next_q_distr = self._q2_target(next_observation, next_action)
-                next_value_target = (next_q_distr.mean - self._beta * next_q_distr.stddev + self._alpha * next_entropy) * done.logical_not().unsqueeze(-1)
-                q_target_sample = reward.unsqueeze(-1) + self._gamma * next_value_target 
+                next_q_values_quantiles = self._q_target(next_observation, next_action) # batch, num_qtls
+                next_q_values_quantiles_sorted, _ = next_q_values_quantiles.sort(dim=-1) # batch, num_qtls 
+                next_q_values_truncated = next_q_values_quantiles_sorted[:, :self._num_quantiles-self._num_drop_quantiles]
+                next_value_target = next_q_values_truncated + self._alpha * next_entropy
+                q_target = reward.unsqueeze(-1) + self._gamma * next_value_target * done.logical_not().unsqueeze(-1) # batch, 1
             # critic learning behavioral policy 
             self._q_optim.zero_grad()
-            q1_distr = self._q1(observation, action)
-            q2_distr = self._q2(observation, action)
-            # critic update calculations
-            q1_crossentropy = - q1_distr.log_prob(q_target_sample) # batch, 1
-            q2_crossentropy = - q2_distr.log_prob(q_target_sample) # batch, 1
-            q1_loss = q1_crossentropy.mean()
-            q2_loss = q2_crossentropy.mean()
-            q_loss = q1_loss + q2_loss
-            self.log("q_loss", q_loss.item())
-            self.log("q1_loss", q1_loss.item())
-            self.log("q2_loss", q2_loss.item())
-            #
-            self.log("q1_avg", q1_distr.mean.mean().item())
-            self.log("q1_std_avg", q1_distr.stddev.mean().item())
-            self.log("q2_avg", q1_distr.mean.mean().item())
-            self.log("q2_std_avg", q1_distr.stddev.mean().item())
-            #
-            q_loss.backward()
+            q_value_quantiles = self._q(observation, action)
+            qvalue_loss = self.quantile_huber_loss(q_value_quantiles, q_target) 
+            self.log("q_loss", qvalue_loss.item())
+            self.log("q_avg", q_value_quantiles.mean().item())
+            self.log("q_std_avg", q_value_quantiles.std(dim=-1).mean().item())
+            qvalue_loss.backward()
             self._q_optim.step()
-            self._soft_update(self._q1, self._q1_target)
-            self._soft_update(self._q2, self._q2_target)
+            self._soft_update(self._q, self._q_target)
             # on-policy updates
-            if (i+1) % self._policy_delay == 0:
+            if (self._total_grad_steps+1) % self._policy_delay == 0:
                 self._pi_optim.zero_grad()
                 action_distr = self._pi(observation)
                 action_onpolicy = action_distr.rsample()
                 pi_entropy = - action_distr.log_prob(action_onpolicy)
                 if self._pi.independent_actions: 
                     pi_entropy = pi_entropy.sum(dim=-1, keepdim=True)
-                if random.random() < 0.5: # randomly select a critic network policy update
-                    q_onpolicy_distr = self._q1(observation, action_onpolicy)
-                else:
-                    q_onpolicy_distr = self._q2(observation, action_onpolicy)
-                q_onpolicy = q_onpolicy_distr.mean - self._beta * q_onpolicy_distr.stddev
+                q_onpolicy_quantiles = self._q(observation, action_onpolicy)
+                q_onpolicy_quantiles_sorted, _ = q_onpolicy_quantiles.sort(dim=-1)
+                q_onpolicy_quantiles_truncated = q_onpolicy_quantiles_sorted[:, :self._num_quantiles-self._num_drop_quantiles]
+                q_onpolicy = q_onpolicy_quantiles_truncated.mean(dim=-1, keepdim=True)
                 pi_obj = - (q_onpolicy + self._alpha * pi_entropy)
                 pi_loss = pi_obj.mean()
                 self.log("pi_loss", pi_loss.item())
                 self.log("pi_entropy_avg", pi_entropy.mean().item())
-                self.log("q_onpolicy_avg", q_onpolicy.mean().item())
-                self.log("q_std_onpolicy_avg", q_onpolicy_distr.stddev.mean().item())
+                self.log("q_avg_onpolicy", q_onpolicy_quantiles.mean(dim=-1).mean().item())
+                self.log("q_std_avg_onpolicy", q_onpolicy_quantiles.std(dim=-1).mean().item())
                 pi_loss.backward()
                 self._pi_optim.step()
                 # if autotune
@@ -206,9 +197,12 @@ class DSTAC(Agent):
             "autotune": self._autotune, 
             "target_entropy": self._target_entropy, 
             "gamma": self._gamma, 
+            "num_quantiles": self._num_quantiles,
+            "num_drop_quantiles": self._num_drop_quantiles, 
             "alpha": self._alpha, 
             "beta": self._beta, 
-            "dropout": self._dropout, 
+            "pi_dropout": self._pi_dropout, 
+            "q_dropout": self._q_dropout, 
             "tau": self._tau, 
             "batch_per_step": self._batch_per_step, 
             "policy_delay": self._policy_delay, 
@@ -220,21 +214,15 @@ class DSTAC(Agent):
     
     def _construct_optimizers(self):
         """Initialize Adam optimizer."""
-        self._pi_optim = AdamW(self._pi.parameters(), lr=self._pi_lr)
-        # q_optim = Adam(self._q1.parameters(), lr=self._q_lr)
-        self._q_optim = AdamW(
-            [{'params': self._q1.parameters()}, {'params': self._q2.parameters()}], 
-            lr=self._q_lr
-        )
+        self._pi_optim = Adam(self._pi.parameters(), lr=self._pi_lr)
+        self._q_optim = Adam(self._q.parameters(), lr=self._q_lr)
 
     def train_mode(self):
-        self._q1.train()
-        self._q2.train()
+        self._q.train()
         self._pi.train()
 
     def eval_mode(self):
-        self._q1.eval()
-        self._q2.eval()
+        self._q.eval()
         self._pi.eval()
 
     def compute_function(self,
@@ -249,7 +237,21 @@ class DSTAC(Agent):
 
     def experiment_end(self): 
         pass
-    
+
+    @staticmethod
+    def quantile_huber_loss(quantiles, samples):
+        # samples: # batch x samples
+        # quantiles: # batch x num_quant
+        pairwise_delta = samples[:, None, :] - quantiles[:, :, None]  # batch x num_quant x samples
+        abs_pairwise_delta = th.abs(pairwise_delta)
+        huber_loss = th.where(abs_pairwise_delta > 1,
+                                abs_pairwise_delta - 0.5,
+                                pairwise_delta ** 2 * 0.5)
+        n_quantiles = quantiles.shape[1]
+        tau = th.arange(n_quantiles, device=pairwise_delta.device).float() / n_quantiles + 1 / 2 / n_quantiles
+        loss = (th.abs(tau[None, None, :, None] - (pairwise_delta < 0).float()) * huber_loss).mean()
+        return loss
+
     @staticmethod
     def add_model_specific_args(parent_parser):
         parser = ArgumentParser(parents=[parent_parser], add_help=False)
@@ -258,18 +260,19 @@ class DSTAC(Agent):
         parser.add_argument("--q_net", type=str, default="continuous_mlp2")
         parser.add_argument("--autotune", action="store_true", default=False)
         parser.add_argument('--no-autotune', dest="autotune", action="store_false")
-        parser.add_argument("--dropout-bootstrap", action="store_true", default=True)
-        parser.add_argument("--no-dropout-bootstrap", dest="dropout_bootstrap", action="store_false")
         parser.add_argument("--target_entropy", type=float, default=-4)
         parser.add_argument("--gamma", type=float, default=0.99)
+        parser.add_argument("--num_quantiles", type=int, default=25)
+        parser.add_argument("--num_drop_quantiles", type=int, default=2)
         parser.add_argument("--alpha", type=float, default=0.2)
         parser.add_argument("--beta", type=float, default=0.5)
-        parser.add_argument("--dropout", type=float, default=0.0)
+        parser.add_argument("--pi_dropout", type=float, default=0.0)
+        parser.add_argument("--q_dropout", type=float, default=0.0)
         parser.add_argument("--tau", type=float, default=0.005)
         parser.add_argument("--batch_per_step", type=int, default=1)
         parser.add_argument("--policy_delay", type=int, default=1)
         parser.add_argument("--pi_lr", type=float, default=3e-4)
-        parser.add_argument("--q_lr", type=float, default=1e-3)
+        parser.add_argument("--q_lr", type=float, default=5e-4)
         parser.add_argument("--batch_size", type=int, default=256)
         return parser
 

@@ -1,12 +1,14 @@
 
 import torch as th
 from torch import nn
-from torch.distributions import Distribution, Normal, Gamma, Categorical, TransformedDistribution, MultivariateNormal 
+from torch.distributions import Distribution, Normal, Laplace, Gamma, Categorical, TransformedDistribution, MultivariateNormal 
 from torch.distributions.transforms import TanhTransform, SigmoidTransform, AffineTransform, ComposeTransform
 from .utils import StableTanhTransform
 
 
-EPS=1e-6
+EPS = 1e-6
+SQRT2 = 1.41421356237
+
 
 class GaussianHead(nn.Module):
     def __init__(self, n):
@@ -15,9 +17,24 @@ class GaussianHead(nn.Module):
 
     def forward(self, x):
         mean = x[...,:self._n]
-        logstd = x[...,self._n:].clip(-10, None)
+        logstd = x[...,self._n:].clip(-5, None)
         std = th.nn.functional.softplus(logstd, beta=1.0)
+        #std = logstd.exp()        
         dist = Normal(mean, std, validate_args=False)
+        return dist
+
+
+class LaplaceHead(nn.Module):
+    def __init__(self, n):
+        super(LaplaceHead, self).__init__()
+        self._n = n
+
+    def forward(self, x):
+        mean = x[...,:self._n]
+        logstd = x[...,self._n:].clip(-5, None)
+        std = th.nn.functional.softplus(logstd, beta=1.0)
+        #std = logstd.exp()
+        dist = Laplace(mean, std / SQRT2, validate_args=False)
         return dist
 
 
@@ -25,12 +42,16 @@ class SquashedGaussianHead(nn.Module):
     def __init__(self, n):
         super(SquashedGaussianHead, self).__init__()
         self._n = n
+        self._max_logstd = 2
+        self._min_logstd = -5
 
     def forward(self, x):
         # bt means before tanh
         mean_bt = x[...,:self._n] 
-        logstd_bt = x[...,self._n:].clip(-10, None)
+        logstd_bt = x[...,self._n:].clip(-5, None)
+        #logstd_bt = self._min_logstd + 0.5*(th.tanh(x[...,self._n:])+1) * (self._max_logstd - self._min_logstd)
         std_bt = th.nn.functional.softplus(logstd_bt, beta=1.0) # this shit is stable 
+        #std_bt = logstd_bt.exp()
         dist_bt = Normal(mean_bt, std_bt, validate_args=False)
         transform = TanhTransform(cache_size=1)
         dist = TransformedDistribution(dist_bt, [transform], validate_args=False)

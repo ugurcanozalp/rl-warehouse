@@ -1,6 +1,7 @@
 
 from typing import Iterator, List, Tuple, Callable, Any
 from argparse import ArgumentParser
+import os 
 
 import random
 import math
@@ -21,7 +22,7 @@ class DROQ(Agent):
     def __init__(self, 
         pi_net: str = "continuous_mlp2", 
         q_net: str = "continuous_mlp2",
-        autotune: bool = True, 
+        autotune: bool = False, 
         target_entropy: float = -4, 
         gamma: float = 0.99, 
         alpha: float = 0.2, 
@@ -32,7 +33,7 @@ class DROQ(Agent):
         batch_per_step: int = 1, 
         policy_delay: int = 1, 
         pi_lr: float = 3e-4, 
-        q_lr: float = 1e-3, 
+        q_lr: float = 5e-4, 
         batch_size: int = 256, 
         **memory_kwargs
     ):
@@ -67,7 +68,18 @@ class DROQ(Agent):
             self._qs_target.append(q_target)
         # optimizers
         self._construct_optimizers()
-        
+
+    def save_ckpt(self, path: os.PathLike):
+        th.save(self._pi.state_dict(), os.path.join(path, "pi.pth"))
+        for k in range(self._num_ensemble):
+            th.save(self._qs[k].state_dict(), os.path.join(path, "q"+str(k)+".pth"))
+
+    def load_ckpt(self, path: os.PathLike):
+        self._pi.load_state_dict(th.load(os.path.join(path, "pi.pth"), map_location=self.device))
+        for k in range(self._num_ensemble):
+            self._qs[k].load_state_dict(th.load(os.path.join(path, "q"+str(k)+".pth"), map_location=self.device))
+            self._hard_update(self._qs[k], self._qs_target[k])
+
     @property
     def extra_fields(self):
         """DBAC algo do not need extra fields
@@ -123,6 +135,9 @@ class DROQ(Agent):
         value = value_.squeeze(0).cpu().numpy()
         return value
     
+    def episode_end(self):
+        pass
+
     def reset(self):
         pass
 
@@ -164,7 +179,7 @@ class DROQ(Agent):
             for k in range(self._num_ensemble):
                 self._soft_update(self._qs[k], self._qs_target[k])
             # train policy one time
-            if (i+1) % self._policy_delay == 0:
+            if (self._total_grad_steps+1) % self._policy_delay == 0:
                 self._pi_optim.zero_grad()
                 action_distr = self._pi(observation)
                 action_imaginary = action_distr.rsample()
@@ -211,8 +226,8 @@ class DROQ(Agent):
     
     def _construct_optimizers(self):
         """Initialize Adam optimizer."""
-        self._pi_optim = AdamW(self._pi.parameters(), lr=self._pi_lr)
-        self._q_optim = AdamW([{'params': q.parameters()} for q in self._qs], lr=self._q_lr)
+        self._pi_optim = Adam(self._pi.parameters(), lr=self._pi_lr)
+        self._q_optim = Adam([{'params': q.parameters()} for q in self._qs], lr=self._q_lr)
 
     def train_mode(self):
         for q in self._qs:
@@ -256,7 +271,7 @@ class DROQ(Agent):
         parser.add_argument("--policy_delay", type=int, default=1)
         parser.add_argument("--target_update_interval", type=int, default=1)
         parser.add_argument("--pi_lr", type=float, default=3e-4)
-        parser.add_argument("--q_lr", type=float, default=1e-3)
+        parser.add_argument("--q_lr", type=float, default=5e-4)
         parser.add_argument("--batch_size", type=int, default=256)
         return parser
 

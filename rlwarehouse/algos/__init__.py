@@ -3,7 +3,8 @@ from .ppo import PPO
 from .sac import SAC
 from .redq import REDQ
 from .stac import STAC
-from .dstac import DSTAC
+from .tac import TAC
+from .estac import ESTAC
 from .droq import DROQ
 from .mddp import MDDP
 from .tqc import TQC

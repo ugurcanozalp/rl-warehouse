@@ -151,4 +151,13 @@ class EpisodeMemory(object):
             multiple, remainder = sample_size // self._size, sample_size % self._size
             indices = indices = list(range(self._size-1, self._size-1-remainder, -1)) + multiple*list(range(self._size))
         return self._sample_by_indices(indices)
-
+    
+    def save_memory(self, path: os.PathLike):
+        for field in self._fields:
+            with open(os.path.join(path, field+".npy"), "wb") as f:
+                np.save(f, self._buffer[field])
+    
+    def load_memory(self, path: os.PathLike):
+        for field in self._fields:
+            with open(os.path.join(path, field+".npy"), "rb") as f:
+                self._buffer[field] = np.load(f)

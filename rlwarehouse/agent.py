@@ -10,6 +10,7 @@ from datetime import datetime
 from typing import List, Tuple, Union, Dict, Any
 import pickle 
 import json
+import jsonlines
 import time
 
 import gymnasium as gym
@@ -57,6 +58,8 @@ class Agent(object):
                  logging: bool = False, 
                  tblogging: bool = False, 
                  algo_tag: str = "", 
+                 env_tag: str = "", 
+                 save_memory: bool = False, 
                  env_kwargs: Dict = dict(), 
                  **memory_kwargs
                  ):
@@ -87,6 +90,8 @@ class Agent(object):
         self._logging = logging
         self._tblogging = tblogging
         self._algo_tag = algo_tag
+        self._env_tag = env_tag
+        self._save_memory = save_memory
         # env
         self._env_name = env_name
         render_mode = None if render_mode=="none" else render_mode
@@ -191,6 +196,7 @@ class Agent(object):
         return self._total_env_interactions + t + 1 - self.memory._not_computed
 
     def _terminate_episode(self):
+        self.episode_end()
         self.reset()
         self._observation, _ = self._env.reset()
         self._episode_score = 0
@@ -260,6 +266,14 @@ class Agent(object):
         """
         raise NotImplementedError
 
+    def episode_end(self):
+        """Call this function at the end of episode.  
+        
+        Raises:
+            NotImplementedError: This function must be overriden. 
+        """
+        raise NotImplementedError
+            
     def train_mode(self):
         """Override this function if you need to do something before training.
         """
@@ -306,11 +320,11 @@ class Agent(object):
             step (int): Step index
             bypass (bool): Bypass no logging flag (Always log)
         """
+        step = self._total_env_interactions if step is None else step
         if self._logging or bypass:
-            step = self._total_env_interactions if step is None else step
             self._logger.log(log_name, log_value, step)
-            if self._tblogging:
-                self._tbloggingger.add_scalar(log_name, log_value, step)
+        if self._tblogging:
+            self._tbloggingger.add_scalar(log_name, log_value, step)
             
     def log_histogram(self, log_name: str, log_value: np.ndarray, step: int = None):
         """Log a vector during training
@@ -347,14 +361,14 @@ class Agent(object):
         """This function takes action output of network bounded in (-1, 1)
         and converts it into environment bounds for action taking. """
         l, h = self._env.action_space.low, self._env.action_space.high
-        return (h+l)/2 + (h-l)/2 * action
+        return (h+l)/2 + (h-l)/2 * action.astype(self._env.action_space.dtype)
     
     def train_step_rollout(self):
         """Rollout in the environment with self and save transitions to memory.
         """
         action, extra = self.step(self._observation, exploit=False)
         if action is None: # it means self says randomly act.
-            action = np.tanh(np.random.randn(*self._env.action_space.shape)) # random action between (-1, 1)
+            action = np.tanh(np.random.randn(*self._env.action_space.shape).astype(self._env.action_space.dtype)) # random action between (-1, 1)
         if self._episode_time == 0:
             self._episode_value_estimate = self.value(self._observation)
         next_observation, reward, done, truncated, _ = self._env.step(self._adjust_action(action))
@@ -437,37 +451,38 @@ class Agent(object):
         self.log("eval_score", score, bypass=True)
         self.log("eval_value_error", value_error, bypass=True)
 
-    def eval_rollout(self): 
-        self.eval_mode()
-        score = 0
-        discounted_score = 0
-        time = 0
-        observation, _ = self._env_eval.reset()
-        if self._recording:
-            self._clear_record(observation)
-        self.reset()
-        is_episode_end = False
-        while not is_episode_end:
-            action, _ = self.step(observation, exploit=True)
-            if action is None: # it means self says randomly act.
-                action = np.tanh(np.random.randn(*self._env.action_space.shape)) # random action between (-1, 1)
-            next_observation, reward, done, truncated, _ = self._env_eval.step(self._adjust_action(action))
-            is_episode_end = done or truncated
-            if self._recording:
-                self._record(next_observation, action, reward, done, truncated, time)
-            score += reward
-            discounted_score += pow(self.gamma, time) * reward
-            time += 1
-            # update observation
-            observation = next_observation
-        print(f"Undiscounted Score: {score}")
-        print(f"Discounted Score: {discounted_score}")
-
+    #def eval_rollout(self): 
+    #    self.eval_mode()
+    #    score = 0
+    #    discounted_score = 0
+    #    time = 0
+    #    observation, _ = self._env_eval.reset()
+    #    if self._recording:
+    #        self._clear_record(observation)
+    #    self.reset()
+    #    is_episode_end = False
+    #    while not is_episode_end:
+    #        action, _ = self.step(observation, exploit=True)
+    #        if action is None: # it means self says randomly act.
+    #            action = np.tanh(np.random.randn(*self._env.action_space.shape)) # random action between (-1, 1)
+    #        next_observation, reward, done, truncated, _ = self._env_eval.step(self._adjust_action(action))
+    #        is_episode_end = done or truncated
+    #        if self._recording:
+    #            self._record(next_observation, action, reward, done, truncated, time)
+    #        score += reward
+    #        discounted_score += pow(self.gamma, time) * reward
+    #        time += 1
+    #        # update observation
+    #        observation = next_observation
+    #    print(f"Undiscounted Score: {score}")
+    #    print(f"Discounted Score: {discounted_score}")
+    
     def experiment(self):
         t0 = time.perf_counter()
         current_time = datetime.now().strftime("%b%d_%H-%M-%S")
-        logname = os.path.join(self._env_name, self.algo_name+self._algo_tag, "seed"+str(self._seed)+current_time)
-        self._logger = Logger(path=os.path.join("logs", logname))
+        logname = os.path.join(self._env_name+self._env_tag, self.algo_name+self._algo_tag, "seed"+str(self._seed)+current_time)
+        logpath = os.path.join("logs", logname)
+        self._logger = Logger(path=logpath)
         self._logger.open()
         if self._tblogging:
             log_dir = os.path.join("runs", logname)
@@ -482,6 +497,9 @@ class Agent(object):
         self.experiment_end()
         t1 = time.perf_counter()
         print(f"Elapsed Time: {t1-t0}")
+        if self._save_memory:
+            self.memory.save_memory(logpath)
+            print("Experience Memory saved. ")
     
     @staticmethod
     def add_model_specific_args(parent_parser):
@@ -500,6 +518,8 @@ class Agent(object):
         parser.add_argument("--logging", action="store_true", default=False)
         parser.add_argument("--tblogging", action="store_true", default=False)
         parser.add_argument("--algo_tag", type=str, default="")
+        parser.add_argument("--env_tag", type=str, default="")        
+        parser.add_argument("--save_memory", action="store_true", default=False)        
         parser.add_argument("--env_kwargs", type=json.loads, default="{}")
         #https://stackoverflow.com/questions/18608812/accepting-a-dictionary-as-an-argument-with-argparse-and-python
         return parser
