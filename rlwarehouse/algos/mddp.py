@@ -25,7 +25,7 @@ class MDDP(Agent):
         target_entropy: float = -4, 
         gamma: float = 0.99, 
         alpha: float = 0.01, 
-        dropout: float = 0.01, 
+        dropout: float = 0.00, 
         tau: float = 0.005, 
         batch_per_step: int = 1, 
         r_lr: float = 1e-3, 
@@ -98,32 +98,23 @@ class MDDP(Agent):
             self._horizon_timer = 0
         self._horizon_timer += 1
         action = self._u_plan[self._horizon_timer-1] #.clip(self._u_min, self._u_max) # clip the plan. 
-        return action, ()
-
-    def episode_end(self):
-        pass
+        value = self._v_plan[self._horizon_timer-1]
+        log_prob = th.zeros_like(value) # MDDP does not use log_prob, but we need to return it for compatibility
+        return action, log_prob, value
 
     @th.no_grad()
     def step(self, observation: np.ndarray, exploit: bool = False):
-        if self._total_env_interactions < self._start_steps:
-            action = None
-        else:
-            observation_ = th.from_numpy(observation).float().to(self.device)
-            action_, _ = self.step_torch(observation_, exploit=exploit)
-            action = action_.cpu().numpy()
-        return action, ()
-
-    def value_torch(self, observation: th.Tensor):
-        _, _ = self.step_torch(observation) # get action, but dont use.  it also estimates value. 
-        value = self._v_plan[self._horizon_timer-1]
-        return value
-    
-    @th.no_grad()
-    def value(self, observation: np.ndarray):
         observation_ = th.from_numpy(observation).float().to(self.device)
-        value_ = self.value_torch(observation_)
+        action_, log_prob_, value_ = self.step_torch(observation_, exploit=exploit)
+        action = action_.cpu().numpy()
+        log_prob = log_prob_.cpu().numpy()
         value = value_.cpu().numpy()
-        return value
+        if self._total_env_interactions < self._start_steps:
+            action = None    
+        return action, log_prob, value
+
+    def episode_end(self):
+        pass
 
     def _optimize_trajectory(self, exploit = False):
         self._initial_forward_pass()
@@ -225,7 +216,8 @@ class MDDP(Agent):
     def learn_on_step(self):
         for i in range(self._batch_per_step): 
             self._total_grad_steps += 1
-            observation, action, reward, next_observation, done, truncated = self.memory.sample(self._batch_size)
+            observation, action, reward, next_observation, done, truncated, \
+                 log_prob, value = self.memory.sample(self._batch_size)
             # Learn model
             delta_observation = next_observation - observation 
             self._model.zero_grad()
@@ -283,6 +275,8 @@ class MDDP(Agent):
         next_observation, 
         done, 
         truncated, 
+        log_prob, 
+        value,         
     ):
         return ()
 
@@ -298,7 +292,7 @@ class MDDP(Agent):
         parser.add_argument("--target_entropy", type=float, default=-4)
         parser.add_argument("--gamma", type=float, default=0.99)
         parser.add_argument("--alpha", type=float, default=0.01)
-        parser.add_argument("--dropout", type=float, default=0.01)
+        parser.add_argument("--dropout", type=float, default=0.00)
         parser.add_argument("--tau", type=float, default=0.005)
         parser.add_argument("--batch_per_step", type=int, default=1)
         parser.add_argument("--r_lr", type=float, default=1e-3)

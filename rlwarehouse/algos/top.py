@@ -200,31 +200,22 @@ class TOP(Agent):
         action = self._pi(observation)
         if not exploit:
             action += self._explore_noise * th.randn_like(action).clip(-self._action_clip, self._action_clip)
-        return action, ()
+        q1_quantiles = self._q1(observation, action)
+        q2_quantiles = self._q2(observation, action) 
+        value = 0.5*( q1_quantiles.mean(dim=-1) + q2_quantiles.mean(dim=-1) )
+        log_prob = th.zeros_like(value)        # log_prob is not used in TOP
+        return action, log_prob, value
 
     @th.no_grad()
     def step(self, observation: np.ndarray, exploit: bool = False):
-        if self._total_env_interactions < self._start_steps:
-            action = None
-        else:
-            observation_ = th.from_numpy(observation).unsqueeze(0).float().to(self.device)
-            action_, _ = self.step_torch(observation_, exploit=exploit)
-            action = action_.squeeze(0).cpu().numpy()
-        return action, ()
-
-    def value_torch(self, observation: th.Tensor):
-        action = self._pi(observation) 
-        q1val = self._q1(observation, action).mean(dim=-1) # batch, double mean due to quantiles
-        q2val = self._q2(observation, action).mean(dim=-1) # batch, double mean due to quantiles
-        value = 0.5*(q1val + q2val) 
-        return value
-    
-    @th.no_grad()
-    def value(self, observation: np.ndarray):
         observation_ = th.from_numpy(observation).unsqueeze(0).float().to(self.device)
-        value_ = self.value_torch(observation_)
+        action_, log_prob_, value_ = self.step_torch(observation_, exploit=exploit)
+        action = action_.squeeze(0).cpu().numpy()
+        log_prob = log_prob_.squeeze(0).cpu().numpy()
         value = value_.squeeze(0).cpu().numpy()
-        return value
+        if self._total_env_interactions < self._start_steps:
+            action = None        
+        return action, log_prob, value
 
     def episode_end(self):
         if self._prev_episode_score is not None:
@@ -246,7 +237,8 @@ class TOP(Agent):
     def learn_on_step(self):
         for i in range(self._batch_per_step):
             self._total_grad_steps += 1
-            observation, action, reward, next_observation, done, truncated = self.memory.sample(self._batch_size)
+            observation, action, reward, next_observation, done, truncated, \
+                 log_prob, value = self.memory.sample(self._batch_size)
             with th.no_grad():
                 next_action = self._pi(next_observation)
                 next_action += self._target_explore_noise * th.randn_like(next_action).clip(-self._target_action_clip, self._target_action_clip)
@@ -317,6 +309,8 @@ class TOP(Agent):
         next_observation, 
         done, 
         truncated, 
+        log_prob, 
+        value,         
     ):
         return ()
 

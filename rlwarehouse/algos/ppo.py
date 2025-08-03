@@ -101,26 +101,16 @@ class PPO(Agent):
         if self._pi.independent_actions: 
             log_prob = log_prob.sum(dim=-1)
         value = self._v(observation)
-        return action, (log_prob, value)
+        return action, log_prob, value
 
     @th.no_grad()
     def step(self, observation: np.ndarray, exploit: bool = False):
         observation_ = th.from_numpy(observation).unsqueeze(0).float().to(self.device)
-        action_, (log_prob_, value_) = self.step_torch(observation_, exploit=exploit)
+        action_, log_prob_, value_ = self.step_torch(observation_, exploit=exploit)
         action = action_.squeeze(0).cpu().numpy()
         log_prob = log_prob_.squeeze(0).cpu().numpy()
         value = value_.squeeze(0).cpu().numpy()
-        return action, (log_prob, value)
-
-    def value_torch(self, observation: th.Tensor):
-        return self._v(observation)
-    
-    @th.no_grad()
-    def value(self, observation: np.ndarray):
-        observation_ = th.from_numpy(observation).unsqueeze(0).float().to(self.device)
-        value_ = self.value_torch(observation_)
-        value = value_.squeeze(0).cpu().numpy()
-        return value
+        return action, log_prob, value
 
     def episode_end(self):
         pass
@@ -196,7 +186,7 @@ class PPO(Agent):
     ):
         not_done = np.logical_not(done)
         cum_return, gae = np.zeros_like(reward), np.zeros_like(reward)
-        _, (_, last_value) = self.step(next_observation[-1])
+        _, _, last_value = self.step(next_observation[-1])
         for t in reversed(range(self.memory._not_computed)):
             # t_global = self._total_env_interactions + t + 1 - self.memory._not_computed
             t_global = self.time_noncomputed_to_global(t)

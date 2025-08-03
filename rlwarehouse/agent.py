@@ -20,7 +20,7 @@ from tbparse import SummaryReader
 from .logger import Logger
 import pandas as pd
 
-from .episode_memory import EpisodeMemory
+from .memory import ReplayMemory
 
 
 type_to_torch_dtype_dict = {
@@ -125,7 +125,7 @@ class Agent(object):
             th.manual_seed(self._seed)
         if self._num_threads != -1:
             th.set_num_threads(self._num_threads)
-        self.memory = EpisodeMemory(device=self._device, 
+        self.memory = ReplayMemory(device=self._device, 
                                     extra_fields=self.extra_fields, 
                                     derived_fields=self.derived_fields, 
                                     **memory_kwargs)
@@ -187,10 +187,27 @@ class Agent(object):
     
     @property
     def gamma(self):
+        """Discount factor of the agent. Default is 1 if not defined. 
+        
+        Returns:
+            float: Discount factor of the agent.
+        """
         if hasattr(self, "_gamma"):
             return self._gamma
         else:
             return 1.0
+        
+    @property
+    def alpha(self):
+        """Alpha value for the agent. It is used in some algorithms such as SAC.
+        
+        Returns:
+            float: Alpha value of the agent.
+        """
+        if hasattr(self, "_alpha"):
+            return self._alpha
+        else:
+            return 0.0
         
     def time_noncomputed_to_global(self, t):
         return self._total_env_interactions + t + 1 - self.memory._not_computed
@@ -246,6 +263,7 @@ class Agent(object):
         """
         raise NotImplementedError
 
+    '''
     @th.no_grad()
     def value(self, obs: np.ndarray):
         """Estimate value of the policy given the observation. 
@@ -257,6 +275,7 @@ class Agent(object):
             NotImplementedError: This function must be overriden. 
         """
         raise NotImplementedError
+    '''
     
     def reset(self): 
         """Reset the agent. 
@@ -375,11 +394,11 @@ class Agent(object):
     def train_step_rollout(self):
         """Rollout in the environment with self and save transitions to memory.
         """
-        action, extra = self.step(self._observation, exploit=False)
+        action, log_prob, value = self.step(self._observation, exploit=False)
         if action is None: # it means self says randomly act.
             action = np.tanh(np.random.randn(*self._env.action_space.shape).astype(self._env.action_space.dtype)) # random action between (-1, 1)
         if self._episode_time == 0:
-            self._episode_value_estimate = self.value(self._observation)
+            self._episode_value_estimate = value
         next_observation, reward, done, truncated, _ = self._env.step(self._adjust_action(action))
         is_episode_end = done or truncated
         self._episode_score += reward
@@ -393,7 +412,8 @@ class Agent(object):
             np.float32(next_observation), 
             done,
             truncated, 
-            *extra
+            log_prob, 
+            value, 
         )
         # compute_period = -1 for off-policy algos. compute on episode end
         # compute_period > 0 for on-policy algos, compute when the time is ok
@@ -447,15 +467,15 @@ class Agent(object):
         rewards = []        
         is_episode_end = False
         while not is_episode_end:
-            values.append(self.value(observation))
-            action, _ = self.step(observation, exploit=True)
+            action, log_prob, value = self.step(observation, exploit=True)
+            values.append(value)
             if action is None: # it means self says randomly act.
                 action = np.tanh(np.random.randn(*self._env.action_space.shape)) # random action between (-1, 1)
             next_observation, reward, done, truncated, _ = self._env_eval.step(self._adjust_action(action))
             is_episode_end = done or truncated
             rewards.append(reward)
             score += reward
-            discounted_score += pow(self.gamma, time) * reward
+            discounted_score += pow(self.gamma, time) * ( reward + self.alpha * value ) 
             time += 1
             # update observation
             observation = next_observation
@@ -514,10 +534,12 @@ class Agent(object):
         self.log_text("experiment_time", current_time)
         self.log_text("seed", str(self._seed))
         self.train() # and test sometimes..
-        self._logger.close()
-        self.experiment_end()
         t1 = time.perf_counter()
         print(f"Elapsed Time: {t1-t0}")
+        self.log("elapsed_time", t1-t0)        
+        self._logger.close()
+        self.experiment_end()
+        self.save_ckpt(logpath) # save model
         if self._save_memory:
             self.memory.save_memory(logpath)
             print("Experience Memory saved. ")

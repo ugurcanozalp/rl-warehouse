@@ -9,14 +9,13 @@ import numpy as np
 import torch as th
 
 
-class EpisodeMemory(object):
+class ReplayMemory(object):
 
-    _main_fields = ("observation", "action", "reward", "next_observation", "done", "truncated")
+    _main_fields = ("observation", "action", "reward", "next_observation", "done", "truncated", "log_prob", "value")
 
     def __init__(self, 
                  buffer_capacity: int, 
                  device: str = "cuda", 
-                 extra_fields: Tuple[str] = tuple(), 
                  derived_fields: Tuple[str] = tuple(), 
                  **kwargs
         ):
@@ -28,16 +27,12 @@ class EpisodeMemory(object):
             device (str): Device where the tensors are put on. 
             env_kwargs (Dict, optional): Extra environment parameteres. 
                 Defaults to dict().
-            extra_fields (Tuple[str], optional): Extra parameters that agent may 
-                calculate such as value, hidden state etc. Defaults to tuple().
             derived_fields (Tuple[str], optional): Derived parameters at the end
                 of the episode such as cumulative return. Defaults to tuple().
         """
         self._device = device
-        self._extra_fields = extra_fields
         self._derived_fields = derived_fields # derived on episode end
-        self._insert_fields = self._main_fields + self._extra_fields # added to memory at each step
-        self._fields = self._insert_fields + self._derived_fields
+        self._fields = self._main_fields + self._derived_fields
         self._buffer_capacity = buffer_capacity
         self.clear() # clears everything 
 
@@ -58,17 +53,12 @@ class EpisodeMemory(object):
     def _insert_transition(self, *data):
         """Insert one time step transition to memory
         """
-        for key, value in zip(self._insert_fields, data):
+        for key, value in zip(self._main_fields, data):
             self._buffer[key][self._ptr] = value
         self._not_computed += 1
         if self._size < self._buffer_capacity:
             self._size += 1 
         self._ptr = (self._ptr + 1) % self._buffer_capacity
-        #if self._ptr == self._buffer_capacity-1:
-        #    self._ptr = self._buffer_capacity # increase by 1 do not make 0.
-        #else:
-        #    self._ptr = (self._ptr + 1) % self._buffer_capacity
-        #print(self._ptr)
 
     def _sample_by_indices(self, indices: List[int]):
         """Sample data given the indices
@@ -100,7 +90,7 @@ class EpisodeMemory(object):
         """
         if self._not_computed == 0:
             return None
-        episode_args = (self._get_last_n(self._buffer[key], self._not_computed) for key in self._insert_fields)
+        episode_args = (self._get_last_n(self._buffer[key], self._not_computed) for key in self._main_fields)
         episode_results = agent.compute_function(*episode_args)
         for key, value in zip(self._derived_fields, episode_results):
             ptr = self._ptr if self._ptr != self._buffer_capacity else self._buffer_capacity
