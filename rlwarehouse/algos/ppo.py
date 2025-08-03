@@ -11,7 +11,6 @@ from ..agent import Agent
 from ..nets import probabilistic_policy_map, value_map
 
 
-# https://pytorch-lightning.readthedocs.io/en/stable/notebooks/lightning_examples/reinforce-learning-DQN.html
 class PPO(Agent):
     
     def __init__(self, 
@@ -130,15 +129,15 @@ class PPO(Agent):
         pass
 
     def learn_on_step(self): 
-        if self.memory._not_computed>0 or self.memory._size==0:
-            return # if not ready for computation, return..
+        pass
+
+    def learn_on_epoch(self):
         for i in range(self._epochs_per_rollout):
             for batch_idx in range(self._batch_per_rollout): # get batch..
                 self._total_grad_steps += 1
-                indices = list(range(batch_idx*self._batch_size, (batch_idx+1)*(self._batch_size)))
                 observation, action, reward, next_observation, \
                     done, truncated, log_prob, value, \
-                    cum_return, gae  = self.memory._sample_by_indices(indices)
+                    cum_return, gae  = self.memory.sample_batch(self._batch_size, batch_idx)
                 distr = self._pi(observation)
                 cross_log_prob = distr.log_prob(action)
                 entropy = - distr.log_prob(distr.rsample())
@@ -234,7 +233,7 @@ class PPO(Agent):
         parser.add_argument("--alpha", type=float, default=5e-4)
         parser.add_argument("--epochs_per_rollout", type=int, default=10) 
         parser.add_argument("--steps_per_rollout", type=int, default=2048) 
-        parser.add_argument("--clip_ratio", type=int, default=0.4) 
+        parser.add_argument("--clip_ratio", type=int, default=0.2) 
         parser.add_argument("--pi_lr", type=float, default=3e-4)
         parser.add_argument("--v_lr", type=float, default=5e-4)
         parser.add_argument("--vf_coef", type=float, default=0.5)

@@ -302,6 +302,15 @@ class Agent(object):
         """
         raise NotImplementedError
 
+    def learn_on_epoch(self):
+        """Define what to do after memory compoutations are done. Used by 
+        on-policy algorithms in general. 
+
+        Raises:
+            NotImplementedError: This function must be overriden. 
+        """     
+        raise NotImplementedError
+       
     def compute_function(self, *args):
         """This function is called after episode end or fixed rollout duration
         to populate necessary variables in the experience replay.
@@ -411,7 +420,9 @@ class Agent(object):
         self._terminate_episode() # initial call for env reset.
         while self._total_env_interactions < self._max_train_steps:
             self.train_step_rollout() # step inside episode memory
-            self.log("total_env_interactions", self._total_env_interactions)
+            self.log("total_env_interactions", self._total_env_interactions) 
+            if self.memory._not_computed==0 and self.memory._size!=0:
+                self.learn_on_epoch()
             if self._total_env_interactions > self._start_steps:
                 self.learn_on_step() # learn here.
             if self._total_env_interactions % self._eval_interval == 0 and self._total_env_interactions != 0:
@@ -432,24 +443,34 @@ class Agent(object):
         time = 0
         self.reset()
         observation, _ = self._env_eval.reset()
-        value_estimate = self.value(observation)
+        values = []
+        rewards = []        
         is_episode_end = False
         while not is_episode_end:
+            values.append(self.value(observation))
             action, _ = self.step(observation, exploit=True)
             if action is None: # it means self says randomly act.
                 action = np.tanh(np.random.randn(*self._env.action_space.shape)) # random action between (-1, 1)
             next_observation, reward, done, truncated, _ = self._env_eval.step(self._adjust_action(action))
             is_episode_end = done or truncated
+            rewards.append(reward)
             score += reward
             discounted_score += pow(self.gamma, time) * reward
             time += 1
             # update observation
             observation = next_observation
         # end of the episode
-        value_error = value_estimate - discounted_score
+        rewards_np = np.stack(rewards, axis=0)
+        values_np = np.stack(values, axis=0)
+        returns_np = np.zeros_like(rewards_np)
+        return_next = 0
+        for t in reversed(range(values_np.shape[0])):
+            returns_np[t] = rewards[t] + self.gamma * return_next
+            return_next = returns_np[t]
+        value_errors = values_np[:-1] - returns_np[:-1]
         # logging 
         self.log("eval_score", score, bypass=True)
-        self.log("eval_value_error", value_error, bypass=True)
+        self.log("eval_value_error", value_errors.mean(), bypass=True)
 
     #def eval_rollout(self): 
     #    self.eval_mode()

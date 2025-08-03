@@ -214,7 +214,6 @@ class SAC(Agent):
     def _construct_optimizers(self):
         """Initialize Adam optimizer."""
         self._pi_optim = Adam(self._pi.parameters(), lr=self._pi_lr)
-        # q_optim = Adam(self._q1.parameters(), lr=self._q_lr)
         self._q_optim = Adam(
             [{'params': self._q1.parameters()}, {'params': self._q2.parameters()}], 
             lr=self._q_lr

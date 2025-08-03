@@ -125,11 +125,27 @@ class EpisodeMemory(object):
             raise AssertionError("Please call compute function to compute remaining features!")
         if self._size > sample_size:
             indices = random.sample(range(self._size), sample_size)
+            return self._sample_by_indices(indices)
         else:
-            multiple, remainder = sample_size // self._size, sample_size % self._size
-            indices = random.sample(range(self._size), remainder) + multiple*list(range(self._size))
-            random.shuffle(indices)
-        return self._sample_by_indices(indices)
+            raise AssertionError("You cannot get a sample bigger than memory!")    
+    
+    def sample_batch(self, batch_size: int, batch_idx: int):
+        """Sample batch data from memory with order. 
+
+        Args:
+            batch_size (int): Size of the sampled data
+            batch_idx (int): Order of the batch. 
+
+        Returns:
+            Tuple[np.ndarray]: Sampled data
+        """
+        if self._not_computed != 0 and bool(self._derived_fields): # do we have things to compute before sampling?
+            raise AssertionError("Please call compute function to compute remaining features!")
+        if self._size > batch_size:
+            indices = list(range(batch_idx * batch_size, (batch_idx+1)*(batch_size)))
+            return self._sample_by_indices(indices)
+        else:
+            raise AssertionError("You cannot get a batch bigger than memory!")            
 
     def sample_last(self, sample_size: int):
         """Sample latest data from memory with a given size

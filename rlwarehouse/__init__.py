@@ -5,3 +5,6 @@ from .episode_memory import EpisodeMemory
 from .env_wrappers import *
 from .summarize import summarize
 from .logger import Logger
+
+# import other gym libraries
+import cartpole_gym
