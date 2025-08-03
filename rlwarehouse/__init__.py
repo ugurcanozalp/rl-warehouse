@@ -7,4 +7,4 @@ from .summarize import summarize
 from .logger import Logger
 
 # import other gym libraries
-import cartpole_gym
+import cartpoleswingup_gym

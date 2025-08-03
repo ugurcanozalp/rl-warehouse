@@ -317,6 +317,9 @@ class TOPSAC(Agent):
                     self._alpha = self._alpha * math.exp(self._q_lr * ( self._target_entropy - entropy_))
                     self.log("alpha", self._alpha)
 
+    def learn_on_epoch(self):
+        pass
+    
     def _construct_optimizers(self):
         """Initialize Adam optimizer."""
         self._pi_optim = Adam(self._pi.parameters(), lr=self._pi_lr)

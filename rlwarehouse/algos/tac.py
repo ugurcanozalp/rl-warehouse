@@ -191,6 +191,9 @@ class TAC(Agent):
                     self._alpha = self._alpha * math.exp(self._q_lr * self._alpha * ( self._target_entropy - pi_entropy_))
                     self.log("alpha", self._alpha)
 
+    def learn_on_epoch(self):
+        pass
+    
     @property
     def hparams(self):
         param = {

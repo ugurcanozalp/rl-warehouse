@@ -288,6 +288,9 @@ class TOP(Agent):
                 self._pi_optim.step()
                 self.log("pi_loss", pi_loss.item())
 
+    def learn_on_epoch(self):
+        pass
+    
     def _construct_optimizers(self):
         """Initialize Adam optimizer."""
         self._pi_optim = Adam(self._pi.parameters(), lr=self._pi_lr)
