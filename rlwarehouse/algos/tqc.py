@@ -69,6 +69,8 @@ class TQC(Agent):
             self._qs_target.append(q_target)
         # optimizers
         self._construct_optimizers()
+        # sample fields
+        self._sample_fields = ("observation", "action", "reward", "next_observation", "done")               
 
     def save_ckpt(self, path: os.PathLike):
         th.save(self._pi.state_dict(), os.path.join(path, "pi.pth"))
@@ -80,13 +82,7 @@ class TQC(Agent):
         for k in range(self._num_ensemble):
             self._qs[k].load_state_dict(th.load(os.path.join(path, "q"+str(k)+".pth"), map_location=self.device))
             self._hard_update(self._qs[k], self._qs_target[k])
-
-    @property
-    def extra_fields(self):
-        """TQC algo do not need extra fields
-        """
-        return ()
-
+            
     @property
     def derived_fields(self):
         """There is no derived field of TQC algorithm. 
@@ -136,8 +132,8 @@ class TQC(Agent):
     def learn_on_step(self):
         for i in range(self._batch_per_step): 
             self._total_grad_steps += 1
-            observation, action, reward, next_observation, done, truncated, \
-                 log_prob, value = self.memory.sample(self._batch_size)
+            observation, action, reward, next_observation, done \
+                = self.memory.sample(self._sample_fields, self._batch_size)
             with th.no_grad():
                 next_action_distr = self._pi(next_observation)
                 next_action = next_action_distr.sample()

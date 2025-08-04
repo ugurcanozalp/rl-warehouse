@@ -60,17 +60,20 @@ class ReplayMemory(object):
             self._size += 1 
         self._ptr = (self._ptr + 1) % self._buffer_capacity
 
-    def _sample_by_indices(self, indices: List[int]):
+    def _sample_by_indices(self, fields: List[str], indices: List[int]):
         """Sample data given the indices
 
         Args:
+            fields (List[str]): List of fields to sample
             indices (List[int]): Indices of sampled data
 
         Returns:
             Tuple[np.ndarray]: Sampled data
         """
         output = []
-        for field in self._fields:
+        if not fields:
+            fields = self._fields
+        for field in fields:
             sampled = np.stack(self._buffer[field][indices], axis=0)
             stacked = th.as_tensor(np.stack(sampled, axis=0), device=self._device)
             output.append(stacked)
@@ -99,10 +102,11 @@ class ReplayMemory(object):
             #self._buffer[key][self._ptr-len(value):self._ptr] = value
         self._not_computed = 0
 
-    def sample(self, sample_size: int):
+    def sample(self, fields: List[str], sample_size: int):
         """Sample data randomly from memory with a given size
 
         Args:
+            fields (List[str]): List of fields to sample
             sample_size (int): Size of the sampled data
 
         Raises:
@@ -115,14 +119,15 @@ class ReplayMemory(object):
             raise AssertionError("Please call compute function to compute remaining features!")
         if self._size > sample_size:
             indices = random.sample(range(self._size), sample_size)
-            return self._sample_by_indices(indices)
+            return self._sample_by_indices(fields, indices)
         else:
             raise AssertionError("You cannot get a sample bigger than memory!")    
     
-    def sample_batch(self, batch_size: int, batch_idx: int):
+    def sample_batch(self, fields: List[str], batch_size: int, batch_idx: int):
         """Sample batch data from memory with order. 
 
         Args:
+            fields (List[str]): List of fields to sample
             batch_size (int): Size of the sampled data
             batch_idx (int): Order of the batch. 
 
@@ -133,14 +138,15 @@ class ReplayMemory(object):
             raise AssertionError("Please call compute function to compute remaining features!")
         if self._size > batch_size:
             indices = list(range(batch_idx * batch_size, (batch_idx+1)*(batch_size)))
-            return self._sample_by_indices(indices)
+            return self._sample_by_indices(fields, indices)
         else:
             raise AssertionError("You cannot get a batch bigger than memory!")            
 
-    def sample_last(self, sample_size: int):
+    def sample_last(self, fields: List[str], sample_size: int):
         """Sample latest data from memory with a given size
 
         Args:
+            fields (List[str]): List of fields to sample
             sample_size (int): Size of the sampled data
 
         Raises:
@@ -156,7 +162,7 @@ class ReplayMemory(object):
         else:
             multiple, remainder = sample_size // self._size, sample_size % self._size
             indices = indices = list(range(self._size-1, self._size-1-remainder, -1)) + multiple*list(range(self._size))
-        return self._sample_by_indices(indices)
+        return self._sample_by_indices(fields, indices)
     
     def save_memory(self, path: os.PathLike):
         for field in self._fields:

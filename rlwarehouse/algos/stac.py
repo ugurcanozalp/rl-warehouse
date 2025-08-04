@@ -2,6 +2,7 @@
 from typing import Iterator, List, Tuple, Callable, Any
 from argparse import ArgumentParser
 import os
+import time
 
 import math
 import numpy as np
@@ -60,6 +61,8 @@ class STAC(Agent):
         self._hard_update(self._q, self._q_target)
         # optimizers
         self._construct_optimizers()
+        # sample fields
+        self._sample_fields = ("observation", "action", "reward", "next_observation", "done")
         
     def save_ckpt(self, path: os.PathLike):
         th.save(self._pi.state_dict(), os.path.join(path, "pi.pth"))
@@ -69,12 +72,6 @@ class STAC(Agent):
         self._pi.load_state_dict(th.load(os.path.join(path, "pi.pth"), map_location=self.device))
         self._q.load_state_dict(th.load(os.path.join(path, "q.pth"), map_location=self.device))
         self._hard_update(self._q, self._q_target)
-            
-    @property
-    def extra_fields(self):
-        """STAC algo do not need extra fields
-        """
-        return ()
 
     @property
     def derived_fields(self):
@@ -104,6 +101,7 @@ class STAC(Agent):
         value = value_.squeeze(0).cpu().numpy()
         if self._total_env_interactions < self._start_steps:
             action = None        
+        t2 = time.time()
         return action, log_prob, value
 
     def episode_end(self):
@@ -123,8 +121,8 @@ class STAC(Agent):
     def learn_on_step(self):
         for i in range(self._batch_per_step): 
             self._total_grad_steps += 1
-            observation, action, reward, next_observation, done, truncated, \
-                 log_prob, value = self.memory.sample(self._batch_size)
+            observation, action, reward, next_observation, done \
+                = self.memory.sample(self._sample_fields, self._batch_size)
             with th.no_grad():
                 next_action_distr = self._pi(next_observation)
                 next_action = next_action_distr.sample()

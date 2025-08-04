@@ -126,7 +126,6 @@ class Agent(object):
         if self._num_threads != -1:
             th.set_num_threads(self._num_threads)
         self.memory = ReplayMemory(device=self._device, 
-                                    extra_fields=self.extra_fields, 
                                     derived_fields=self.derived_fields, 
                                     **memory_kwargs)
 

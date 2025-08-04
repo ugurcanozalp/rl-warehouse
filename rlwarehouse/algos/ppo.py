@@ -52,6 +52,8 @@ class PPO(Agent):
         self._v = value_map[v_net](**self.env_info).to(self._device)
         # optimizers
         self._construct_optimizers()
+        # sample fields
+        self._sample_fields = ("observation", "action", "log_prob", "value", "cum_return", "gae")   
 
     def save_ckpt(self, path: os.PathLike):
         th.save(self._pi.state_dict(), os.path.join(path, "pi.pth"))
@@ -78,12 +80,6 @@ class PPO(Agent):
             "pi_lr": self._pi_lr, 
         }
         return param
-    
-    @property
-    def extra_fields(self):
-        """On policy estimated log_prob and value is necessary for PPO
-        """
-        return ("log_prob", "value")
 
     @property
     def derived_fields(self):
@@ -125,9 +121,8 @@ class PPO(Agent):
         for i in range(self._epochs_per_rollout):
             for batch_idx in range(self._batch_per_rollout): # get batch..
                 self._total_grad_steps += 1
-                observation, action, reward, next_observation, \
-                    done, truncated, log_prob, value, \
-                    cum_return, gae  = self.memory.sample_batch(self._batch_size, batch_idx)
+                observation, action, log_prob, value, cum_return, gae \
+                    = self.memory.sample_batch(self._sample_fields, self._batch_size, batch_idx)
                 distr = self._pi(observation)
                 cross_log_prob = distr.log_prob(action)
                 entropy = - distr.log_prob(distr.rsample())

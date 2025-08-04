@@ -64,6 +64,8 @@ class MDDP(Agent):
         # self._model_hessian = th.vmap(th.func.hessian(lambda x, u: self._model(x, u).mean, argnums=(0, 1)), in_dims=(0, 0))
         # optimizers
         self._construct_optimizers()
+        # sample fields
+        self._sample_fields = ("observation", "action", "reward", "next_observation", "done")   
 
     def save_ckpt(self, path: os.PathLike):
         th.save(self._model.state_dict(), os.path.join(path, "model.pth"))
@@ -72,12 +74,6 @@ class MDDP(Agent):
     def load_ckpt(self, path: os.PathLike):
         self._model.load_state_dict(th.load(os.path.join(path, "model.pth"), map_location=self.device))
         self._r.load_state_dict(th.load(os.path.join(path, "r.pth"), map_location=self.device))
-
-    @property
-    def extra_fields(self):
-        """MDDP algo do not need extra fields
-        """
-        return ()
 
     @property
     def derived_fields(self):
@@ -216,8 +212,8 @@ class MDDP(Agent):
     def learn_on_step(self):
         for i in range(self._batch_per_step): 
             self._total_grad_steps += 1
-            observation, action, reward, next_observation, done, truncated, \
-                 log_prob, value = self.memory.sample(self._batch_size)
+            observation, action, reward, next_observation, done \
+                = self.memory.sample(self._batch_size)
             # Learn model
             delta_observation = next_observation - observation 
             self._model.zero_grad()

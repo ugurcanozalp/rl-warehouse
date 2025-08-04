@@ -58,6 +58,8 @@ class SAC(Agent):
             param.requires_grad = False
         # optimizers
         self._construct_optimizers()
+        # sample fields
+        self._sample_fields = ("observation", "action", "reward", "next_observation", "done")       
 
     def save_ckpt(self, path: os.PathLike):
         th.save(self._pi.state_dict(), os.path.join(path, "pi.pth"))
@@ -86,12 +88,6 @@ class SAC(Agent):
             "pi_lr": self._pi_lr, 
         }
         return param
-    
-    @property
-    def extra_fields(self):
-        """SAC algo do not need extra fields
-        """
-        return ()
 
     @property
     def derived_fields(self):
@@ -141,8 +137,8 @@ class SAC(Agent):
     def learn_on_step(self):
         for i in range(self._batch_per_step):
             self._total_grad_steps += 1
-            observation, action, reward, next_observation, done, truncated, \
-                 log_prob, value = self.memory.sample(self._batch_size)
+            observation, action, reward, next_observation, done \
+                = self.memory.sample(self._sample_fields, self._batch_size)
             with th.no_grad():
                 next_action_distr = self._pi(next_observation)
                 next_action = next_action_distr.sample()
