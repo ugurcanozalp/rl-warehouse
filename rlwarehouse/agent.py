@@ -482,11 +482,10 @@ class Agent(object):
         rewards_np = np.stack(rewards, axis=0)
         values_np = np.stack(values, axis=0)
         returns_np = np.zeros_like(rewards_np)
-        return_next = 0
-        for t in reversed(range(values_np.shape[0])):
-            returns_np[t] = rewards[t] + self.alpha * (-log_probs[t]) + self.gamma * return_next
-            return_next = returns_np[t]
-        value_errors = values_np[:-1] - returns_np[:-1]
+        returns_np[-1] = values_np[-1]
+        for t in reversed(range(values_np.shape[0]-1)):
+            returns_np[t] = rewards[t] + self.alpha * (-log_probs[t]) + self.gamma * returns_np[t+1]
+        value_errors = values_np - returns_np
         # logging 
         self.log("eval_score", score, bypass=True)
         self.log("eval_value_error", value_errors.mean(), bypass=True)
