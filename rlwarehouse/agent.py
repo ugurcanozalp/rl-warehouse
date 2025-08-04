@@ -401,7 +401,7 @@ class Agent(object):
         next_observation, reward, done, truncated, _ = self._env.step(self._adjust_action(action))
         is_episode_end = done or truncated
         self._episode_score += reward
-        self._episode_discounted_score += pow(self.gamma, self._episode_time) * reward
+        self._episode_discounted_score += pow(self.gamma, self._episode_time) * ( reward + self.alpha * (-log_prob))
         self._total_env_interactions += 1
         self._episode_time += 1
         self.memory._insert_transition(
@@ -474,7 +474,7 @@ class Agent(object):
             is_episode_end = done or truncated
             rewards.append(reward)
             score += reward
-            discounted_score += pow(self.gamma, time) * ( reward + self.alpha * value ) 
+            discounted_score += pow(self.gamma, time) * ( reward + self.alpha * (-log_prob) ) 
             time += 1
             # update observation
             observation = next_observation
