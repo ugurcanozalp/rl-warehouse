@@ -458,12 +458,12 @@ class Agent(object):
         """
         self.eval_mode()
         score = 0
-        discounted_score = 0
         time = 0
         self.reset()
         observation, _ = self._env_eval.reset()
         values = []
         rewards = []        
+        log_probs = []
         is_episode_end = False
         while not is_episode_end:
             action, log_prob, value = self.step(observation, exploit=True)
@@ -473,8 +473,8 @@ class Agent(object):
             next_observation, reward, done, truncated, _ = self._env_eval.step(self._adjust_action(action))
             is_episode_end = done or truncated
             rewards.append(reward)
+            log_probs.append(log_prob)
             score += reward
-            discounted_score += pow(self.gamma, time) * ( reward + self.alpha * (-log_prob) ) 
             time += 1
             # update observation
             observation = next_observation
@@ -484,38 +484,12 @@ class Agent(object):
         returns_np = np.zeros_like(rewards_np)
         return_next = 0
         for t in reversed(range(values_np.shape[0])):
-            returns_np[t] = rewards[t] + self.gamma * return_next
+            returns_np[t] = rewards[t] + self.alpha * (-log_probs[t]) + self.gamma * return_next
             return_next = returns_np[t]
         value_errors = values_np[:-1] - returns_np[:-1]
         # logging 
         self.log("eval_score", score, bypass=True)
         self.log("eval_value_error", value_errors.mean(), bypass=True)
-
-    #def eval_rollout(self): 
-    #    self.eval_mode()
-    #    score = 0
-    #    discounted_score = 0
-    #    time = 0
-    #    observation, _ = self._env_eval.reset()
-    #    if self._recording:
-    #        self._clear_record(observation)
-    #    self.reset()
-    #    is_episode_end = False
-    #    while not is_episode_end:
-    #        action, _ = self.step(observation, exploit=True)
-    #        if action is None: # it means self says randomly act.
-    #            action = np.tanh(np.random.randn(*self._env.action_space.shape)) # random action between (-1, 1)
-    #        next_observation, reward, done, truncated, _ = self._env_eval.step(self._adjust_action(action))
-    #        is_episode_end = done or truncated
-    #        if self._recording:
-    #            self._record(next_observation, action, reward, done, truncated, time)
-    #        score += reward
-    #        discounted_score += pow(self.gamma, time) * reward
-    #        time += 1
-    #        # update observation
-    #        observation = next_observation
-    #    print(f"Undiscounted Score: {score}")
-    #    print(f"Discounted Score: {discounted_score}")
     
     def experiment(self):
         t0 = time.perf_counter()
