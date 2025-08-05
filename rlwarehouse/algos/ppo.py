@@ -23,7 +23,7 @@ class PPO(Agent):
         steps_per_rollout: int = 2048, 
         clip_ratio: int = 0.2, 
         pi_lr: float = 3e-4,
-        v_lr: float = 5e-4, 
+        v_lr: float = 3e-4, 
         vf_coef: float = 0.5, 
         max_grad_norm: float = 0.5, 
         batch_size: int = 256, 
@@ -220,7 +220,7 @@ class PPO(Agent):
         parser.add_argument("--steps_per_rollout", type=int, default=2048) 
         parser.add_argument("--clip_ratio", type=int, default=0.2) 
         parser.add_argument("--pi_lr", type=float, default=3e-4)
-        parser.add_argument("--v_lr", type=float, default=5e-4)
+        parser.add_argument("--v_lr", type=float, default=3e-4)
         parser.add_argument("--vf_coef", type=float, default=0.5)
         parser.add_argument("--max_grad_norm", type=float, default=0.5)
         parser.add_argument("--batch_size", type=int, default=256)

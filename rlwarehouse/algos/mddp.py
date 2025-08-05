@@ -28,8 +28,8 @@ class MDDP(Agent):
         dropout: float = 0.00, 
         tau: float = 0.005, 
         batch_per_step: int = 1, 
-        r_lr: float = 1e-3, 
-        model_lr: float = 1e-3, 
+        r_lr: float = 3e-4, 
+        model_lr: float = 3e-4, 
         plan_horizon: int = 25, 
         control_horizon: int = 1, 
         max_ddp_iters: int = 5, 
@@ -291,8 +291,8 @@ class MDDP(Agent):
         parser.add_argument("--dropout", type=float, default=0.00)
         parser.add_argument("--tau", type=float, default=0.005)
         parser.add_argument("--batch_per_step", type=int, default=1)
-        parser.add_argument("--r_lr", type=float, default=1e-3)
-        parser.add_argument("--model_lr", type=float, default=1e-3)
+        parser.add_argument("--r_lr", type=float, default=3e-4)
+        parser.add_argument("--model_lr", type=float, default=3e-4)
         parser.add_argument("--plan_horizon", type=int, default=25)
         parser.add_argument("--control_horizon", type=int, default=1)
         parser.add_argument("--max_ddp_iters", type=int, default=5)

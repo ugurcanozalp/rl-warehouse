@@ -32,7 +32,7 @@ class REDQ(Agent):
         batch_per_step: int = 1, 
         policy_delay: int = 1, 
         pi_lr: float = 3e-4, 
-        q_lr: float = 5e-4, 
+        q_lr: float = 3e-4, 
         batch_size: int = 256, 
         **memory_kwargs
     ):
@@ -252,7 +252,7 @@ class REDQ(Agent):
         parser.add_argument("--policy_delay", type=int, default=1)
         parser.add_argument("--target_update_interval", type=int, default=1)
         parser.add_argument("--pi_lr", type=float, default=3e-4)
-        parser.add_argument("--q_lr", type=float, default=5e-4)
+        parser.add_argument("--q_lr", type=float, default=3e-4)
         parser.add_argument("--batch_size", type=int, default=256)
         return parser
 
