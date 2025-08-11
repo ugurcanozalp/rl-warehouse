@@ -486,7 +486,6 @@ class Agent(object):
         for t in reversed(range(values_np.shape[0]-1)):
             returns_np[t] = rewards[t] + self.alpha * (-log_probs[t]) + self.gamma * returns_np[t+1]
         value_errors = values_np - returns_np
-        # logging 
         self.log("eval_score", score, bypass=True)
         self.log("eval_value_error", value_errors.mean(), bypass=True)
     
@@ -508,7 +507,7 @@ class Agent(object):
         self.train() # and test sometimes..
         t1 = time.perf_counter()
         print(f"Elapsed Time: {t1-t0}")
-        self.log("elapsed_time", t1-t0)        
+        #self.log("elapsed_time", t1-t0)        
         self._logger.close()
         self.experiment_end()
         self.save_ckpt(logpath) # save model
