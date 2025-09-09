@@ -111,7 +111,7 @@ class TQC(Agent):
         action = action_.squeeze(0).cpu().numpy()
         log_prob = log_prob_.squeeze(0).cpu().numpy()
         value = value_.squeeze(0).cpu().numpy()
-        if self._total_env_interactions < self._start_steps:
+        if self._total_env_interactions < self._start_steps and not exploit:
             action = None        
         return action, log_prob, value
     

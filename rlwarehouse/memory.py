@@ -14,7 +14,7 @@ class ReplayMemory(object):
     _main_fields = ("observation", "action", "reward", "next_observation", "done", "truncated", "log_prob", "value")
 
     def __init__(self, 
-                 buffer_capacity: int, 
+                 buffer_capacity: int = 1000000, 
                  device: str = "cuda", 
                  derived_fields: Tuple[str] = tuple(), 
                  **kwargs

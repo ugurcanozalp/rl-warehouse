@@ -1,7 +1,7 @@
 
 from .ppo import PPO
 from .sac import SAC
-from .dsac import DSAC
+from .dsact import DSACT
 from .redq import REDQ
 from .stac import STAC
 from .tac import TAC

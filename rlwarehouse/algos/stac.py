@@ -25,7 +25,8 @@ class STAC(Agent):
         target_entropy: float = -4, 
         gamma: float = 0.99, 
         alpha: float = 0.2, 
-        beta: float = 0.5, 
+        beta: float = 0.25, 
+        autopessimism: bool = False,
         pi_dropout: float = 0.0, 
         q_dropout: float = 0.0, 
         tau: float = 0.005, 
@@ -43,6 +44,7 @@ class STAC(Agent):
         self._target_entropy = target_entropy
         self._alpha = alpha
         self._beta = beta
+        self._autopessimism = autopessimism
         self._pi_dropout = pi_dropout
         self._q_dropout = q_dropout
         self._tau = tau
@@ -99,9 +101,8 @@ class STAC(Agent):
         action = action_.squeeze(0).cpu().numpy()
         log_prob = log_prob_.squeeze(0).cpu().numpy()
         value = value_.squeeze(0).cpu().numpy()
-        if self._total_env_interactions < self._start_steps:
+        if self._total_env_interactions < self._start_steps and not exploit:
             action = None        
-        t2 = time.time()
         return action, log_prob, value
 
     def episode_end(self):
@@ -142,6 +143,11 @@ class STAC(Agent):
             self.log("q_std_avg", q_distr.stddev.mean().item())
             q_loss.backward()
             self._q_optim.step()
+            if self._autopessimism:
+                # adjust beta for autopessimism
+                target_z_score_ = ( (q_distr.mean - q_target)/q_distr.stddev ).mean().cpu().item()
+                self._beta = self._beta - self._q_lr * target_z_score_
+                self.log("beta", self._beta)        
             self._soft_update(self._q, self._q_target)
             # on-policy updates
             if (self._total_grad_steps+1) % self._policy_delay == 0:
@@ -178,6 +184,7 @@ class STAC(Agent):
             "gamma": self._gamma, 
             "alpha": self._alpha, 
             "beta": self._beta, 
+            "autopessimism": self._autopessimism,
             "pi_dropout": self._pi_dropout, 
             "q_dropout": self._q_dropout, 
             "tau": self._tau, 
@@ -228,7 +235,8 @@ class STAC(Agent):
         parser.add_argument("--target_entropy", type=float, default=-4)
         parser.add_argument("--gamma", type=float, default=0.99)
         parser.add_argument("--alpha", type=float, default=0.2)
-        parser.add_argument("--beta", type=float, default=0.5)
+        parser.add_argument("--beta", type=float, default=0.25)
+        parser.add_argument("--autopessimism", action="store_true", default=False)
         parser.add_argument("--pi_dropout", type=float, default=0.0)
         parser.add_argument("--q_dropout", type=float, default=0.0)
         parser.add_argument("--tau", type=float, default=0.005)

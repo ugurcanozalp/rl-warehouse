@@ -100,7 +100,7 @@ class Agent(object):
         self._env.action_space.seed(self._seed)
         self._env.observation_space.seed(self._seed)
         # eval env
-        self._env_eval = gym.make(env_name, render_mode=None, **env_kwargs) # render_mode="none", 
+        self._env_eval = gym.make(env_name, render_mode=render_mode, **env_kwargs) # render_mode="none", 
         self._env_eval.reset(seed=42+self._seed)
         self._env_eval.action_space.seed(42+self._seed)
         self._env_eval.observation_space.seed(42+self._seed)
@@ -347,6 +347,8 @@ class Agent(object):
             step (int): Step index
             bypass (bool): Bypass no logging flag (Always log)
         """
+        if self._logger is None:
+            return
         step = self._total_env_interactions if step is None else step
         if self._logging or bypass:
             self._logger.log(log_name, log_value, step)
@@ -361,6 +363,8 @@ class Agent(object):
             log_value (np.ndarray): Value of the logged parameter
             step (int): Step index
         """
+        if self._logger is None:
+            return        
         if self._logging:
             step = self._total_env_interactions if step is None else step
             self._tbloggingger.add_histogram(log_name, log_value, step)
@@ -371,6 +375,8 @@ class Agent(object):
         Args:
             hparams (Dict): Hyperparameter dictionary
         """
+        if self._logger is None:
+            return        
         self._logger.log_hparams(hparams)
 
     def log_text(self, description: str, text: str): 
@@ -380,6 +386,8 @@ class Agent(object):
             description (str): Text description
             text (str): Text to be logged
         """
+        if self._logger is None:
+            return        
         self._logger.log_text(description, text)
         if self._tblogging:
             self._tbloggingger.add_text(description, text)
@@ -488,6 +496,8 @@ class Agent(object):
         value_errors = values_np - returns_np
         self.log("eval_score", score, bypass=True)
         self.log("eval_value_error", value_errors.mean(), bypass=True)
+        if hasattr(self, "_beta"):
+            self.log("eval_beta", self._beta, bypass=True) # used by STAC
     
     def experiment(self):
         t0 = time.perf_counter()

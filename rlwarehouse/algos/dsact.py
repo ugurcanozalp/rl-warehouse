@@ -12,9 +12,10 @@ from ..agent import Agent
 from ..nets import probabilistic_policy_map, probabilistic_qvalue_map
 
 
-class DSAC(Agent):
+class DSACT(Agent):
     
-    """Distributional Soft Actor Critic
+    """Distributional Soft Actor Critic with Three Refinements
+    https://arxiv.org/abs/2310.05858
     """
     
     def __init__(self, 
@@ -105,7 +106,7 @@ class DSAC(Agent):
         action = action_.squeeze(0).cpu().numpy()
         log_prob = log_prob_.squeeze(0).cpu().numpy()
         value = value_.squeeze(0).cpu().numpy()
-        if self._total_env_interactions < self._start_steps:
+        if self._total_env_interactions < self._start_steps and not exploit:
             action = None        
         return action, log_prob, value
 

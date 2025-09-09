@@ -136,3 +136,4 @@ logs*/*
 results/*
 results*/*
 external*/*
+*.sh

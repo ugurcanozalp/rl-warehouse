@@ -1,12 +1,12 @@
 
 from argparse import ArgumentParser
 
-from rlwarehouse.algos import DSAC
+from rlwarehouse.algos import DSACT
 
 parser = ArgumentParser()
-parser = DSAC.add_model_specific_args(parser)
+parser = DSACT.add_model_specific_args(parser)
 args = parser.parse_args()
 dict_args = vars(args)
-agent = DSAC(**dict_args)
+agent = DSACT(**dict_args)
 
 agent.experiment()

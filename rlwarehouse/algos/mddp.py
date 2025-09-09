@@ -105,8 +105,8 @@ class MDDP(Agent):
         action = action_.cpu().numpy()
         log_prob = log_prob_.cpu().numpy()
         value = value_.cpu().numpy()
-        if self._total_env_interactions < self._start_steps:
-            action = None    
+        #if self._total_env_interactions < self._start_steps  and not exploit:
+        #    action = None 
         return action, log_prob, value
 
     def episode_end(self):
@@ -213,7 +213,7 @@ class MDDP(Agent):
         for i in range(self._batch_per_step): 
             self._total_grad_steps += 1
             observation, action, reward, next_observation, done \
-                = self.memory.sample(self._batch_size)
+                = self.memory.sample(self._sample_fields, self._batch_size)
             # Learn model
             delta_observation = next_observation - observation 
             self._model.zero_grad()
@@ -232,6 +232,9 @@ class MDDP(Agent):
             self.log("r_avg", r_distr.mean.mean().item())
             self.log("r_std_avg", r_distr.stddev.mean().item())
 
+    def learn_on_epoch(self):
+        pass
+    
     @property
     def hparams(self):
         param = {
