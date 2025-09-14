@@ -27,6 +27,8 @@ class STAC(Agent):
         alpha: float = 0.2, 
         beta: float = 0.25, 
         autopessimism: bool = False,
+        zeta: float = 0, 
+        z_clip: float = 0.05,        
         pi_dropout: float = 0.0, 
         q_dropout: float = 0.0, 
         tau: float = 0.005, 
@@ -45,6 +47,8 @@ class STAC(Agent):
         self._alpha = alpha
         self._beta = beta
         self._autopessimism = autopessimism
+        self._zeta = zeta
+        self._z_clip = z_clip
         self._pi_dropout = pi_dropout
         self._q_dropout = q_dropout
         self._tau = tau
@@ -145,9 +149,11 @@ class STAC(Agent):
             self._q_optim.step()
             if self._autopessimism:
                 # adjust beta for autopessimism
-                target_z_score_ = ( (q_distr.mean - q_target)/q_distr.stddev ).mean().cpu().item()
-                self._beta = self._beta - self._q_lr * target_z_score_
+                error_z_score_ = ( (q_distr.mean - q_target)/q_distr.stddev - self._zeta).clip(-self._z_clip, self._z_clip).mean().cpu().item()
+                self._beta = self._beta - self._q_lr * error_z_score_
                 self.log("beta", self._beta)        
+                self.log("target_z_score", error_z_score_)
+            # soft update
             self._soft_update(self._q, self._q_target)
             # on-policy updates
             if (self._total_grad_steps+1) % self._policy_delay == 0:
@@ -185,6 +191,8 @@ class STAC(Agent):
             "alpha": self._alpha, 
             "beta": self._beta, 
             "autopessimism": self._autopessimism,
+            "zeta": self._zeta, 
+            "z_clip": self._z_clip,
             "pi_dropout": self._pi_dropout, 
             "q_dropout": self._q_dropout, 
             "tau": self._tau, 
@@ -237,6 +245,8 @@ class STAC(Agent):
         parser.add_argument("--alpha", type=float, default=0.2)
         parser.add_argument("--beta", type=float, default=0.25)
         parser.add_argument("--autopessimism", action="store_true", default=False)
+        parser.add_argument("--zeta", type=float, default=0.0)
+        parser.add_argument("--z_clip", type=float, default=0.05)        
         parser.add_argument("--pi_dropout", type=float, default=0.0)
         parser.add_argument("--q_dropout", type=float, default=0.0)
         parser.add_argument("--tau", type=float, default=0.005)
