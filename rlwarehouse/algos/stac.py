@@ -25,10 +25,8 @@ class STAC(Agent):
         target_entropy: float = -4, 
         gamma: float = 0.99, 
         alpha: float = 0.2, 
-        beta: float = 0.25, 
+        beta: float = 0.0, 
         autopessimism: bool = False,
-        zeta: float = 0, 
-        z_clip: float = 0.05,        
         pi_dropout: float = 0.0, 
         q_dropout: float = 0.0, 
         tau: float = 0.005, 
@@ -36,6 +34,7 @@ class STAC(Agent):
         policy_delay: int = 1, 
         pi_lr: float = 3e-4, 
         q_lr: float = 3e-4, 
+        beta_lr: float = 3e-4,
         batch_size: int = 256, 
         **memory_kwargs
     ):
@@ -47,8 +46,6 @@ class STAC(Agent):
         self._alpha = alpha
         self._beta = beta
         self._autopessimism = autopessimism
-        self._zeta = zeta
-        self._z_clip = z_clip
         self._pi_dropout = pi_dropout
         self._q_dropout = q_dropout
         self._tau = tau
@@ -57,6 +54,7 @@ class STAC(Agent):
         self._batch_size = batch_size 
         self._q_lr = q_lr
         self._pi_lr = pi_lr
+        self._beta_lr = beta_lr
         # networks
         self._pi = probabilistic_policy_map[pi_net](dropout=self._pi_dropout, **self.env_info).to(self._device)
         self._q = probabilistic_qvalue_map[q_net](dropout=self._q_dropout, **self.env_info).to(self._device)
@@ -136,7 +134,9 @@ class STAC(Agent):
                     next_entropy = next_entropy.sum(dim=-1, keepdim=True)  
                 next_q_distr = self._q_target(next_observation, next_action)
                 next_value = (next_q_distr.mean - self._beta * next_q_distr.stddev + self._alpha * next_entropy) * done.logical_not().unsqueeze(-1)
+                #next_value_unbiased = (next_q_distr.mean + self._alpha * next_entropy) * done.logical_not().unsqueeze(-1)
                 q_target = reward.unsqueeze(-1) + self._gamma * next_value
+                #q_target_unbiased = reward.unsqueeze(-1) + self._gamma * next_value_unbiased
             # critic learning behavioral policy 
             self._q_optim.zero_grad()
             q_distr = self._q(observation, action)
@@ -147,12 +147,12 @@ class STAC(Agent):
             self.log("q_std_avg", q_distr.stddev.mean().item())
             q_loss.backward()
             self._q_optim.step()
-            if self._autopessimism:
-                # adjust beta for autopessimism
-                error_z_score_ = ( (q_distr.mean - q_target)/q_distr.stddev - self._zeta).clip(-self._z_clip, self._z_clip).mean().cpu().item()
-                self._beta = self._beta - self._q_lr * error_z_score_
+            if self._autopessimism: # EXPERIMENTAL: adjust beta for autopessimism
+                error_z_score_ = ( (q_distr.mean - q_target)/q_distr.stddev).mean()
+                err_term = error_z_score_.cpu().item()
+                self._beta = self._beta - self._beta_lr * err_term
                 self.log("beta", self._beta)        
-                self.log("target_z_score", error_z_score_)
+                self.log("error_z_score_", error_z_score_)
             # soft update
             self._soft_update(self._q, self._q_target)
             # on-policy updates
@@ -191,8 +191,6 @@ class STAC(Agent):
             "alpha": self._alpha, 
             "beta": self._beta, 
             "autopessimism": self._autopessimism,
-            "zeta": self._zeta, 
-            "z_clip": self._z_clip,
             "pi_dropout": self._pi_dropout, 
             "q_dropout": self._q_dropout, 
             "tau": self._tau, 
@@ -243,10 +241,8 @@ class STAC(Agent):
         parser.add_argument("--target_entropy", type=float, default=-4)
         parser.add_argument("--gamma", type=float, default=0.99)
         parser.add_argument("--alpha", type=float, default=0.2)
-        parser.add_argument("--beta", type=float, default=0.25)
+        parser.add_argument("--beta", type=float, default=0.0)
         parser.add_argument("--autopessimism", action="store_true", default=False)
-        parser.add_argument("--zeta", type=float, default=0.0)
-        parser.add_argument("--z_clip", type=float, default=0.05)        
         parser.add_argument("--pi_dropout", type=float, default=0.0)
         parser.add_argument("--q_dropout", type=float, default=0.0)
         parser.add_argument("--tau", type=float, default=0.005)
@@ -254,6 +250,7 @@ class STAC(Agent):
         parser.add_argument("--policy_delay", type=int, default=1)
         parser.add_argument("--pi_lr", type=float, default=3e-4)
         parser.add_argument("--q_lr", type=float, default=3e-4)
+        parser.add_argument("--beta_lr", type=float, default=3e-4)
         parser.add_argument("--batch_size", type=int, default=256)
         return parser
 
