@@ -12,9 +12,9 @@ from ..agent import Agent
 from ..nets import probabilistic_policy_map, quantile_qvalue_map
 
 
-class TAC(Agent):
+class SQAC(Agent):
     
-    """Truncated Actor Critic
+    """Stochastic Quantile Actor Critic
     """
     
     def __init__(self, 
@@ -25,8 +25,9 @@ class TAC(Agent):
         gamma: float = 0.99, 
         num_quantiles: int = 25,         
         alpha: float = 0.2, 
-        beta: float = 0.5, 
-        num_drop_quantiles: int = 2, 
+        beta: float = 0.0, 
+        autopessimism: bool = False,
+        kappa: float = 1, 
         pi_dropout: float = 0.0, 
         q_dropout: float = 0.0, 
         tau: float = 0.005, 
@@ -43,9 +44,10 @@ class TAC(Agent):
         self._autotune = autotune
         self._target_entropy = target_entropy
         self._num_quantiles = num_quantiles
-        self._num_drop_quantiles = num_drop_quantiles
+        self._kappa = kappa
         self._alpha = alpha
         self._beta = beta
+        self._autopessimism = autopessimism
         self._pi_dropout = pi_dropout
         self._q_dropout = q_dropout
         self._tau = tau
@@ -132,20 +134,25 @@ class TAC(Agent):
                 if self._pi.independent_actions: 
                     next_entropy = next_entropy.sum(dim=-1, keepdim=True)  
                 next_q_values_quantiles = self._q_target(next_observation, next_action) # batch, num_qtls
-                next_q_values_quantiles_sorted, _ = next_q_values_quantiles.sort(dim=-1) # batch, num_qtls 
-                next_q_values_truncated = next_q_values_quantiles_sorted[:, :self._num_quantiles-self._num_drop_quantiles]
-                next_value_target = next_q_values_truncated + self._alpha * next_entropy
+                next_q_values_pessimistic = next_q_values_quantiles - self._beta * next_q_values_quantiles.std(dim=-1, keepdim=True)
+                next_value_target = next_q_values_pessimistic + self._alpha * next_entropy
                 q_target = reward.unsqueeze(-1) + self._gamma * next_value_target * done.logical_not().unsqueeze(-1) # batch, 1
             # critic learning behavioral policy 
             self._q_optim.zero_grad()
             q_value_quantiles = self._q(observation, action)
-            qvalue_loss = self.quantile_huber_loss(q_value_quantiles, q_target) 
+            qvalue_loss = self.quantile_huber_loss(q_value_quantiles, q_target, self._kappa) 
             self.log("q_loss", qvalue_loss.item())
             self.log("q_avg", q_value_quantiles.mean().item())
             self.log("q_std_avg", q_value_quantiles.std(dim=-1).mean().item())
             qvalue_loss.backward()
             self._q_optim.step()
-            self._soft_update(self._q, self._q_target)
+            self._soft_update(self._q, self._q_target)            
+            if self._autopessimism: # EXPERIMENTAL: adjust beta for autopessimism
+                error_z_score_ = ( (q_value_quantiles.mean(dim=-1) - q_target.mean(dim=-1))/q_value_quantiles.std(dim=-1)).mean()
+                err_term = error_z_score_.clip(-0.1, 0.1).cpu().item()
+                self._beta = self._beta - self._q_lr * err_term
+                self.log("beta", self._beta)        
+                self.log("error_z_score_", error_z_score_)                
             # on-policy updates
             if (self._total_grad_steps+1) % self._policy_delay == 0:
                 self._pi_optim.zero_grad()
@@ -155,9 +162,8 @@ class TAC(Agent):
                 if self._pi.independent_actions: 
                     pi_entropy = pi_entropy.sum(dim=-1, keepdim=True)
                 q_onpolicy_quantiles = self._q(observation, action_onpolicy)
-                q_onpolicy_quantiles_sorted, _ = q_onpolicy_quantiles.sort(dim=-1)
-                q_onpolicy_quantiles_truncated = q_onpolicy_quantiles_sorted[:, :self._num_quantiles-self._num_drop_quantiles]
-                q_onpolicy = q_onpolicy_quantiles_truncated.mean(dim=-1, keepdim=True)
+                q_onpolicy_quantiles_pessimistic = q_onpolicy_quantiles - self._beta * q_onpolicy_quantiles.std(dim=-1, keepdim=True) 
+                q_onpolicy = q_onpolicy_quantiles_pessimistic.mean(dim=-1, keepdim=True)
                 pi_obj = - (q_onpolicy + self._alpha * pi_entropy)
                 pi_loss = pi_obj.mean()
                 self.log("pi_loss", pi_loss.item())
@@ -182,9 +188,10 @@ class TAC(Agent):
             "target_entropy": self._target_entropy, 
             "gamma": self._gamma, 
             "num_quantiles": self._num_quantiles,
-            "num_drop_quantiles": self._num_drop_quantiles, 
+            "kappa": self._kappa, 
             "alpha": self._alpha, 
             "beta": self._beta, 
+            "autopessimism": self._autopessimism,
             "pi_dropout": self._pi_dropout, 
             "q_dropout": self._q_dropout, 
             "tau": self._tau, 
@@ -225,13 +232,13 @@ class TAC(Agent):
         pass
 
     @staticmethod
-    def quantile_huber_loss(quantiles, samples):
+    def quantile_huber_loss(quantiles, samples, kappa):
         # samples: # batch x samples
         # quantiles: # batch x num_quant
         pairwise_delta = samples[:, None, :] - quantiles[:, :, None]  # batch x num_quant x samples
         abs_pairwise_delta = th.abs(pairwise_delta)
         huber_loss = th.where(abs_pairwise_delta > 1,
-                                abs_pairwise_delta - 0.5,
+                                kappa*(abs_pairwise_delta - kappa/2),
                                 pairwise_delta ** 2 * 0.5)
         n_quantiles = quantiles.shape[1]
         tau = th.arange(n_quantiles, device=pairwise_delta.device).float() / n_quantiles + 1 / 2 / n_quantiles
@@ -249,9 +256,10 @@ class TAC(Agent):
         parser.add_argument("--target_entropy", type=float, default=-4)
         parser.add_argument("--gamma", type=float, default=0.99)
         parser.add_argument("--num_quantiles", type=int, default=25)
-        parser.add_argument("--num_drop_quantiles", type=int, default=2)
+        parser.add_argument("--kappa", type=float, default=1.0)
         parser.add_argument("--alpha", type=float, default=0.2)
-        parser.add_argument("--beta", type=float, default=0.5)
+        parser.add_argument("--beta", type=float, default=0.0)
+        parser.add_argument("--autopessimism", action="store_true", default=False)
         parser.add_argument("--pi_dropout", type=float, default=0.0)
         parser.add_argument("--q_dropout", type=float, default=0.0)
         parser.add_argument("--tau", type=float, default=0.005)

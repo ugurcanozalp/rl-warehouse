@@ -496,8 +496,8 @@ class Agent(object):
         value_errors = values_np - returns_np
         self.log("eval_score", score, bypass=True)
         self.log("eval_value_error", value_errors.mean(), bypass=True)
-        if hasattr(self, "_beta"):
-            self.log("eval_beta", self._beta, bypass=True) # used by STAC
+        #if hasattr(self, "_beta"):
+        #    self.log("eval_beta", self._beta, bypass=True) # used by STAC
     
     def experiment(self):
         t0 = time.perf_counter()

@@ -12,13 +12,13 @@ from ..agent import Agent
 from ..nets import probabilistic_policy_map, quantile_qvalue_map
 
 
-DEFAULT_ARMS = [-0.75, 0] # , 0.5, 1
+DEFAULT_ARMS = [-1, 0] # , 0.5, 1
 
 class ExpWeights(object):
     
     def __init__(self, 
                  arms: List = DEFAULT_ARMS,
-                 lr: float = 0.1,
+                 lr: float = 0.2,
                  window: int = 5, 
                  decay: float = 0.9,
                  init: float = 0.0,
@@ -26,8 +26,8 @@ class ExpWeights(object):
         """Initialize bandit.
 
         Args:
-            arms (List, optional): Arm values. Defaults to [-1, -0.5, 0].
-            lr (float, optional): Learning rate. Defaults to 0.1.
+            arms (List, optional): Arm values. Defaults to [-1, 0].
+            lr (float, optional): Learning rate. Defaults to 0.2.
             window (int, optional): Window to normalize over. Defaults to 5.
             decay (float, optional): Decay rate for probability. Defaults to 0.9.
             init (float, optional): Weight initialization. Defaults to 0.0.

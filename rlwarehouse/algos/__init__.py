@@ -4,7 +4,7 @@ from .sac import SAC
 from .dsact import DSACT
 from .redq import REDQ
 from .stac import STAC
-from .tac import TAC
+from .sqac import SQAC
 from .estac import ESTAC
 from .droq import DROQ
 from .mddp import MDDP
