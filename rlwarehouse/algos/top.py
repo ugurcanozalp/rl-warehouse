@@ -12,7 +12,7 @@ from ..agent import Agent
 from ..nets import policy_map, quantile_qvalue_map
 
 
-DEFAULT_ARMS = [-1, 0] # , 0.5, 1
+DEFAULT_ARMS = [-0.5, 0] # , 0.5, 1
 
 class ExpWeights(object):
     

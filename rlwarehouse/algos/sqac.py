@@ -23,7 +23,7 @@ class SQAC(Agent):
         autotune: bool = False, 
         target_entropy: float = -4, 
         gamma: float = 0.99, 
-        num_quantiles: int = 25,         
+        num_quantiles: int = 50,         
         alpha: float = 0.2, 
         beta: float = 0.0, 
         autopessimism: bool = False,
@@ -152,7 +152,7 @@ class SQAC(Agent):
                 err_term = error_z_score_.clip(-0.1, 0.1).cpu().item()
                 self._beta = self._beta - self._q_lr * err_term
                 self.log("beta", self._beta)        
-                self.log("error_z_score_", error_z_score_)                
+                self.log("error_z_score_", error_z_score_)     
             # on-policy updates
             if (self._total_grad_steps+1) % self._policy_delay == 0:
                 self._pi_optim.zero_grad()
@@ -242,7 +242,7 @@ class SQAC(Agent):
                                 pairwise_delta ** 2 * 0.5)
         n_quantiles = quantiles.shape[1]
         tau = th.arange(n_quantiles, device=pairwise_delta.device).float() / n_quantiles + 1 / 2 / n_quantiles
-        loss = (th.abs(tau[None, None, :, None] - (pairwise_delta < 0).float()) * huber_loss).mean()
+        loss = (th.abs(tau[None, :, None] - (pairwise_delta < 0).float()) * huber_loss).mean()
         return loss
 
     @staticmethod
@@ -255,7 +255,7 @@ class SQAC(Agent):
         parser.add_argument('--no-autotune', dest="autotune", action="store_false")
         parser.add_argument("--target_entropy", type=float, default=-4)
         parser.add_argument("--gamma", type=float, default=0.99)
-        parser.add_argument("--num_quantiles", type=int, default=25)
+        parser.add_argument("--num_quantiles", type=int, default=50)
         parser.add_argument("--kappa", type=float, default=1.0)
         parser.add_argument("--alpha", type=float, default=0.2)
         parser.add_argument("--beta", type=float, default=0.0)

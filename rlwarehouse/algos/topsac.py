@@ -12,7 +12,8 @@ from ..agent import Agent
 from ..nets import probabilistic_policy_map, quantile_qvalue_map
 
 
-DEFAULT_ARMS = [-1, 0] # , 0.5, 1
+DEFAULT_ARMS = [-0.5, 0] # , 0.5, 1
+
 
 class ExpWeights(object):
     
@@ -110,7 +111,7 @@ class TOPSAC(Agent):
         autotune: bool = False, 
         target_entropy: float = -4,  
         alpha: float = 0.2, 
-        num_quantiles: int = 25, 
+        num_quantiles: int = 50, 
         tau: float = 0.005, 
         batch_per_step: int = 1, 
         policy_delay: int = 1,
@@ -374,7 +375,7 @@ class TOPSAC(Agent):
         parser.add_argument("--target_entropy", type=float, default=-4)
         parser.add_argument("--gamma", type=float, default=0.99)
         parser.add_argument("--alpha", type=float, default=0.2)
-        parser.add_argument("--num_quantiles", type=int, default=25)
+        parser.add_argument("--num_quantiles", type=int, default=50)
         parser.add_argument("--tau", type=float, default=0.005)
         parser.add_argument("--batch_per_step", type=int, default=1)
         parser.add_argument("--policy_delay", type=int, default=1)
