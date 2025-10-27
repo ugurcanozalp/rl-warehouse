@@ -12,10 +12,10 @@ from ..agent import Agent
 from ..nets import probabilistic_policy_map, probabilistic_qvalue_map
 
 
-class DSACT(Agent):
+class DSAC(Agent):
     
-    """Distributional Soft Actor Critic with Three Refinements
-    https://arxiv.org/abs/2310.05858
+    """Distributional Soft Actor Critic
+    https://arxiv.org/pdf/2001.02811
     """
     
     def __init__(self, 
@@ -51,17 +51,12 @@ class DSACT(Agent):
         self._pi_lr = pi_lr
         # networks
         self._pi = probabilistic_policy_map[pi_net](dropout=self._pi_dropout, **self.env_info).to(self._device)
-        self._q1 = probabilistic_qvalue_map[q_net](dropout=self._q_dropout, **self.env_info).to(self._device)
-        self._q1_target = probabilistic_qvalue_map[q_net](dropout=self._q_dropout, **self.env_info).to(self._device)
-        self._q2 = probabilistic_qvalue_map[q_net](dropout=self._q_dropout, **self.env_info).to(self._device)
-        self._q2_target = probabilistic_qvalue_map[q_net](dropout=self._q_dropout, **self.env_info).to(self._device)        
+        self._q = probabilistic_qvalue_map[q_net](dropout=self._q_dropout, **self.env_info).to(self._device)
+        self._q_target = probabilistic_qvalue_map[q_net](dropout=self._q_dropout, **self.env_info).to(self._device)
         # no grad for target networks
-        for param in self._q1_target.parameters():
+        for param in self._q_target.parameters():
             param.requires_grad = False
-        self._hard_update(self._q1, self._q1_target)
-        for param in self._q2_target.parameters():
-            param.requires_grad = False
-        self._hard_update(self._q2, self._q2_target)            
+        self._hard_update(self._q, self._q_target)        
         # optimizers
         self._construct_optimizers()
         # sample fields
@@ -69,15 +64,12 @@ class DSACT(Agent):
                 
     def save_ckpt(self, path: os.PathLike):
         th.save(self._pi.state_dict(), os.path.join(path, "pi.pth"))
-        th.save(self._q1.state_dict(), os.path.join(path, "q1.pth"))
-        th.save(self._q2.state_dict(), os.path.join(path, "q2.pth"))
+        th.save(self._q.state_dict(), os.path.join(path, "q.pth"))
 
     def load_ckpt(self, path: os.PathLike):
         self._pi.load_state_dict(th.load(os.path.join(path, "pi.pth"), map_location=self.device))
-        self._q1.load_state_dict(th.load(os.path.join(path, "q1.pth"), map_location=self.device))
-        self._q2.load_state_dict(th.load(os.path.join(path, "q2.pth"), map_location=self.device))
-        self._hard_update(self._q1, self._q1_target)
-        self._hard_update(self._q2, self._q2_target)
+        self._q.load_state_dict(th.load(os.path.join(path, "q.pth"), map_location=self.device))
+        self._hard_update(self._q, self._q_target)
 
     @property
     def derived_fields(self):
@@ -94,9 +86,8 @@ class DSACT(Agent):
         log_prob = distr.log_prob(action)
         if self._pi.independent_actions: 
             log_prob = log_prob.sum(dim=-1)            
-        q1_distr = self._q1(observation, action)
-        q2_distr = self._q2(observation, action) 
-        value = 0.5*( q1_distr.mean.squeeze(-1) + q2_distr.mean.squeeze(-1) ) + self._alpha * (-log_prob)
+        q_distr = self._q(observation, action)
+        value = q_distr.mean.squeeze(-1) + self._alpha * (-log_prob)
         return action, log_prob, value
 
     @th.no_grad()
@@ -135,35 +126,24 @@ class DSACT(Agent):
                 next_entropy = - next_action_distr.log_prob(next_action)
                 if self._pi.independent_actions: 
                     next_entropy = next_entropy.sum(dim=-1, keepdim=True)  
-                next_q1_distr = self._q1_target(next_observation, next_action)
-                next_q2_distr = self._q2_target(next_observation, next_action)
-                next_q1_sample = next_q1_distr.rsample()
-                next_q2_sample = next_q2_distr.rsample()
-                next_q_sample = th.min(next_q1_sample, next_q2_sample)
+                next_q_distr = self._q_target(next_observation, next_action)
+                next_q_sample = next_q_distr.rsample()
                 next_value_sample = (next_q_sample + self._alpha * next_entropy) * done.logical_not().unsqueeze(-1)
                 q_target_sample = reward.unsqueeze(-1) + self._gamma * next_value_sample
             # critic learning behavioral policy 
             self._q_optim.zero_grad()
-            q1_distr = self._q1(observation, action)
-            q2_distr = self._q2(observation, action)
-            q_target_sample_1 = th.clamp(q_target_sample, q1_distr.mean-3*q1_distr.stddev, q1_distr.mean+3*q1_distr.stddev)
-            q_target_sample_2= th.clamp(q_target_sample, q2_distr.mean-3*q2_distr.stddev, q2_distr.mean+3*q2_distr.stddev)
-            q1_ce = - q1_distr.log_prob(q_target_sample_1) 
-            q2_ce = - q2_distr.log_prob(q_target_sample_2)
-            w1 = 1e-6 + q1_distr.variance.mean().detach() # variance-based critic gradient adjustment
-            w2 = 1e-6 + q2_distr.variance.mean().detach() # variance-based critic gradient adjustment
-            q_loss = w1*q1_ce.mean() + w2*q2_ce.mean() 
-            q_avg = 0.5*(q1_distr.mean + q2_distr.mean)
-            q_std_avg = 0.5*(q1_distr.stddev + q2_distr.stddev)
-            q_std_epistemic = 0.5*(q1_distr.mean - q2_distr.mean).abs()
+            q_distr = self._q(observation, action)
+            q_target_sample_clamped = th.clamp(q_target_sample, q_distr.mean-3*q_distr.stddev, q_distr.mean+3*q_distr.stddev)
+            q_ce = - q_distr.log_prob(q_target_sample_clamped) 
+            q_loss = q_ce.mean()
+            q_avg = q_distr.mean
+            q_std_avg = q_distr.stddev
             self.log("q_loss", q_loss.item())
             self.log("q_avg", q_avg.mean().item())
             self.log("q_std_avg", q_std_avg.mean().item())
-            self.log("q_std_epistemic", q_std_epistemic.mean().item())
             q_loss.backward()
             self._q_optim.step()
-            self._soft_update(self._q1, self._q1_target)
-            self._soft_update(self._q2, self._q2_target)
+            self._soft_update(self._q, self._q_target)
             # on-policy updates
             if (self._total_grad_steps+1) % self._policy_delay == 0:
                 self._pi_optim.zero_grad()
@@ -172,19 +152,16 @@ class DSACT(Agent):
                 pi_entropy = - action_distr.log_prob(action_onpolicy)
                 if self._pi.independent_actions: 
                     pi_entropy = pi_entropy.sum(dim=-1, keepdim=True)
-                q1_onpolicy_distr = self._q1(observation, action_onpolicy)
-                q2_onpolicy_distr = self._q2(observation, action_onpolicy)
-                q_obj_onpolicy = th.min(q1_onpolicy_distr.mean, q2_onpolicy_distr.mean)
-                q_avg_onpolocy = 0.5*(q1_onpolicy_distr.mean + q2_onpolicy_distr.mean)
-                q_std_avg_onpolicy = 0.5*(q1_onpolicy_distr.stddev + q2_onpolicy_distr.stddev)
-                q_std_epistemic_onpolicy = 0.5*(q1_onpolicy_distr.mean - q2_onpolicy_distr.mean).abs()
+                q_onpolicy_distr = self._q(observation, action_onpolicy)
+                q_obj_onpolicy = q_onpolicy_distr.mean
+                q_avg_onpolocy = q_onpolicy_distr.mean
+                q_std_avg_onpolicy = q_onpolicy_distr.stddev
                 pi_obj = - (q_obj_onpolicy + self._alpha * pi_entropy) 
                 pi_loss = pi_obj.mean()
                 self.log("pi_loss", pi_loss.item())
                 self.log("pi_entropy_avg", pi_entropy.mean().item())
                 self.log("q_avg_onpolicy", q_avg_onpolocy.mean().item())
                 self.log("q_std_avg_onpolicy", q_std_avg_onpolicy.mean().item())
-                self.log("q_std_avg_onpolicy", q_std_epistemic_onpolicy.mean().item())
                 pi_loss.backward()
                 self._pi_optim.step()
                 # if autotune
@@ -218,17 +195,15 @@ class DSACT(Agent):
         """Initialize Adam optimizer."""
         self._pi_optim = Adam(self._pi.parameters(), lr=self._pi_lr)
         self._q_optim = Adam(
-            [{'params': self._q1.parameters()}, {'params': self._q2.parameters()}], 
+            [{'params': self._q.parameters()}], 
             lr=self._q_lr
         )
     def train_mode(self):
-        self._q1.train()
-        self._q2.train()
+        self._q.train()
         self._pi.train()
 
     def eval_mode(self):
-        self._q1.eval()
-        self._q2.eval()
+        self._q.eval()
         self._pi.eval()
 
     def compute_function(self,

@@ -111,7 +111,7 @@ class TOP(Agent):
         target_explore_noise: float = 0.2, 
         action_clip: float = 1.0, 
         target_action_clip: float = 0.5, 
-        num_quantiles: int = 100, 
+        num_quantiles: int = 25, 
         tau: float = 0.005, 
         batch_per_step: int = 1, 
         policy_delay: int = 1,
@@ -344,7 +344,7 @@ class TOP(Agent):
         parser.add_argument("--target_explore_noise", type=float, default=0.2)
         parser.add_argument("--action_clip", type=float, default=1.0)
         parser.add_argument("--target_action_clip", type=float, default=0.5)
-        parser.add_argument("--num_quantiles", type=int, default=100)
+        parser.add_argument("--num_quantiles", type=int, default=25)
         parser.add_argument("--tau", type=float, default=0.005)
         parser.add_argument("--batch_per_step", type=int, default=1)
         parser.add_argument("--policy_delay", type=int, default=1)

@@ -4,10 +4,10 @@ from torch import nn
 from .heads import *
 
 
-class ContinuousMLPModel(nn.Module):
+class ContinuousMLP2Model(nn.Module):
     independent_observations = True
     def __init__(self, observation_shape, action_shape, dropout=0, **kwargs):
-        super(ContinuousMLPModel, self).__init__()
+        super(ContinuousMLP2Model, self).__init__()
         num_inputs = observation_shape[0] + action_shape[0]
         self.fc1 = nn.Sequential(nn.Linear(num_inputs, 512), nn.Dropout(dropout), nn.LayerNorm(512), nn.ReLU())
         self.fc2 = nn.Sequential(nn.Linear(512, 512), nn.Dropout(dropout), nn.LayerNorm(512), nn.ReLU())

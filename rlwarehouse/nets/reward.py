@@ -4,10 +4,10 @@ from torch import nn
 from .heads import *
 
         
-class ContinuousMLPReward(nn.Module):
+class ContinuousMLP2Reward(nn.Module):
     independent_observations = True
     def __init__(self, observation_shape, action_shape, dropout=0, **kwargs):
-        super(ContinuousMLPReward, self).__init__()
+        super(ContinuousMLP2Reward, self).__init__()
         num_inputs = observation_shape[0] + action_shape[0]
         self.fc1 = nn.Sequential(nn.Linear(num_inputs, 256), nn.Dropout(dropout), nn.LayerNorm(256), nn.ReLU())
         self.fc2 = nn.Sequential(nn.Linear(256, 256), nn.Dropout(dropout), nn.LayerNorm(256), nn.ReLU())

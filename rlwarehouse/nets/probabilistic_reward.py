@@ -4,9 +4,9 @@ from torch import nn
 from .heads import *
 
 
-class ContinuousMLPStochasticReward(nn.Module):
+class ContinuousMLP2StochasticReward(nn.Module):
     def __init__(self, observation_shape, action_shape, dropout=0, **kwargs):
-        super(ContinuousMLPStochasticReward, self).__init__()
+        super(ContinuousMLP2StochasticReward, self).__init__()
         num_inputs = observation_shape[0] + action_shape[0]
         self.fc1 = nn.Sequential(nn.Linear(num_inputs, 256), nn.Dropout(dropout), nn.LayerNorm(256), nn.ReLU())
         self.fc2 = nn.Sequential(nn.Linear(256, 256), nn.Dropout(dropout), nn.LayerNorm(256), nn.ReLU())

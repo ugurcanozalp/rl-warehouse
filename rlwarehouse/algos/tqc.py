@@ -27,7 +27,7 @@ class TQC(Agent):
         gamma: float = 0.99, 
         alpha: float = 0.2, 
         num_ensemble: int = 5, 
-        num_quantiles: int = 50, 
+        num_quantiles: int = 25, 
         num_drop_quantiles_per_net: float = 2, 
         tau: float = 0.005, 
         batch_per_step: int = 1, 
@@ -272,7 +272,7 @@ class TQC(Agent):
         parser.add_argument("--gamma", type=float, default=0.99)
         parser.add_argument("--alpha", type=float, default=0.2)
         parser.add_argument("--num_ensemble", type=int, default=5)
-        parser.add_argument("--num_quantiles", type=int, default=50)
+        parser.add_argument("--num_quantiles", type=int, default=25)
         parser.add_argument("--num_drop_quantiles_per_net", type=int, default=2)
         parser.add_argument("--tau", type=float, default=0.005)
         parser.add_argument("--batch_per_step", type=int, default=1)

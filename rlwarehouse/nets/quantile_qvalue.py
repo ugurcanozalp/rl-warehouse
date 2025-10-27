@@ -3,9 +3,9 @@ import torch as th
 from torch import nn
 
 
-class ContinuousMLPQuantileQValue(nn.Module):
+class ContinuousMLP2QuantileQValue(nn.Module):
     def __init__(self, observation_shape, action_shape, dropout=0, num_quantiles=25, **kwargs):
-        super(ContinuousMLPQuantileQValue, self).__init__()
+        super(ContinuousMLP2QuantileQValue, self).__init__()
         num_inputs = observation_shape[0] + action_shape[0]
         self.fc1 = nn.Sequential(nn.Linear(num_inputs, 256), nn.Dropout(dropout), nn.LayerNorm(256), nn.ReLU())
         self.fc2 = nn.Sequential(nn.Linear(256, 256), nn.Dropout(dropout), nn.LayerNorm(256), nn.ReLU())
@@ -17,3 +17,22 @@ class ContinuousMLPQuantileQValue(nn.Module):
         x = self.fc2(x)
         q_quantiles = self.q_fc(x)
         return q_quantiles
+
+
+class ContinuousMLP3QuantileQValue(nn.Module):
+    def __init__(self, observation_shape, action_shape, dropout=0, num_quantiles=25, **kwargs):
+        super(ContinuousMLP3QuantileQValue, self).__init__()
+        num_inputs = observation_shape[0] + action_shape[0]
+        self.fc1 = nn.Sequential(nn.Linear(num_inputs, 256), nn.Dropout(dropout), nn.LayerNorm(256), nn.ReLU())
+        self.fc2 = nn.Sequential(nn.Linear(256, 256), nn.Dropout(dropout), nn.LayerNorm(256), nn.ReLU())
+        self.fc3 = nn.Sequential(nn.Linear(256, 256), nn.Dropout(dropout), nn.LayerNorm(256), nn.ReLU())
+        self.q_fc = nn.Linear(256, num_quantiles)
+
+    def forward(self, observation, action):
+        x = th.concat([observation, action], dim=-1)
+        x = self.fc1(x)
+        x = self.fc2(x)
+        x = self.fc3(x)
+        q_quantiles = self.q_fc(x)
+        return q_quantiles
+    
