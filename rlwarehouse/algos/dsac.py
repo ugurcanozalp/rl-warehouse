@@ -28,6 +28,7 @@ class DSAC(Agent):
         pi_dropout: float = 0.0, 
         q_dropout: float = 0.0, 
         tau: float = 0.005, 
+        td_bound: float = 20.0, 
         batch_per_step: int = 1, 
         policy_delay: int = 1, 
         pi_lr: float = 3e-4, 
@@ -44,6 +45,7 @@ class DSAC(Agent):
         self._pi_dropout = pi_dropout
         self._q_dropout = q_dropout
         self._tau = tau
+        self._td_bound = td_bound
         self._batch_per_step = batch_per_step
         self._policy_delay = policy_delay
         self._batch_size = batch_size 
@@ -133,7 +135,7 @@ class DSAC(Agent):
             # critic learning behavioral policy 
             self._q_optim.zero_grad()
             q_distr = self._q(observation, action)
-            q_target_sample_clamped = th.clamp(q_target_sample, q_distr.mean-3*q_distr.stddev, q_distr.mean+3*q_distr.stddev)
+            q_target_sample_clamped = th.clamp(q_target_sample, q_distr.mean-self._td_bound, q_distr.mean+self._td_bound)
             q_ce = - q_distr.log_prob(q_target_sample_clamped) 
             q_loss = q_ce.mean()
             q_avg = q_distr.mean
@@ -183,6 +185,7 @@ class DSAC(Agent):
             "pi_dropout": self._pi_dropout, 
             "q_dropout": self._q_dropout, 
             "tau": self._tau, 
+            "td_bound": self._td_bound,
             "batch_per_step": self._batch_per_step, 
             "policy_delay": self._policy_delay, 
             "batch_size": self._batch_size, 
@@ -235,6 +238,7 @@ class DSAC(Agent):
         parser.add_argument("--pi_dropout", type=float, default=0.0)
         parser.add_argument("--q_dropout", type=float, default=0.0)
         parser.add_argument("--tau", type=float, default=0.005)
+        parser.add_argument("--td_bound", type=float, default=20.0)
         parser.add_argument("--batch_per_step", type=int, default=1)
         parser.add_argument("--policy_delay", type=int, default=1)
         parser.add_argument("--pi_lr", type=float, default=3e-4)

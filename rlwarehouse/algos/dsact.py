@@ -55,6 +55,8 @@ class DSACT(Agent):
         self._q1_target = probabilistic_qvalue_map[q_net](dropout=self._q_dropout, **self.env_info).to(self._device)
         self._q2 = probabilistic_qvalue_map[q_net](dropout=self._q_dropout, **self.env_info).to(self._device)
         self._q2_target = probabilistic_qvalue_map[q_net](dropout=self._q_dropout, **self.env_info).to(self._device)        
+        self._avg_std1 = 0.1
+        self._avg_std2 = 0.1
         # no grad for target networks
         for param in self._q1_target.parameters():
             param.requires_grad = False
@@ -137,21 +139,28 @@ class DSACT(Agent):
                     next_entropy = next_entropy.sum(dim=-1, keepdim=True)  
                 next_q1_distr = self._q1_target(next_observation, next_action)
                 next_q2_distr = self._q2_target(next_observation, next_action)
-                next_q1_sample = next_q1_distr.rsample()
-                next_q2_sample = next_q2_distr.rsample()
-                next_q_sample = th.min(next_q1_sample, next_q2_sample)
-                next_value_sample = (next_q_sample + self._alpha * next_entropy) * done.logical_not().unsqueeze(-1)
+                # take the minimum distribution
+                next_q_mu = th.where(next_q1_distr.mean>next_q2_distr.mean, next_q2_distr.mean, next_q1_distr.mean)
+                #next_q_var = th.where(next_q1_distr.mean>next_q2_distr.mean, next_q2_distr.variance, next_q1_distr.variance)
+                next_q_sample = th.where(next_q1_distr.mean>next_q2_distr.mean, next_q2_distr.rsample(), next_q1_distr.rsample())
+                next_value_mu = ( next_q_mu + self._alpha * next_entropy ) * done.logical_not().unsqueeze(-1)
+                #next_value_var = ( next_q_var ) * done.logical_not().unsqueeze(-1)
+                next_value_sample = ( next_q_sample + self._alpha * next_entropy ) * done.logical_not().unsqueeze(-1)
+                q_target_mu = reward.unsqueeze(-1) + self._gamma * next_value_mu
+                #q_target_var = self._gamma**2 * next_value_var
                 q_target_sample = reward.unsqueeze(-1) + self._gamma * next_value_sample
             # critic learning behavioral policy 
             self._q_optim.zero_grad()
             q1_distr = self._q1(observation, action)
             q2_distr = self._q2(observation, action)
-            q_target_sample_1 = th.clamp(q_target_sample, q1_distr.mean-3*q1_distr.stddev, q1_distr.mean+3*q1_distr.stddev)
-            q_target_sample_2= th.clamp(q_target_sample, q2_distr.mean-3*q2_distr.stddev, q2_distr.mean+3*q2_distr.stddev)
-            q1_ce = - q1_distr.log_prob(q_target_sample_1) 
-            q2_ce = - q2_distr.log_prob(q_target_sample_2)
-            w1 = 1e-6 + q1_distr.variance.mean().detach() # variance-based critic gradient adjustment
-            w2 = 1e-6 + q2_distr.variance.mean().detach() # variance-based critic gradient adjustment
+            q_target_sample_for1 = th.clamp(q_target_sample, q1_distr.mean - 3*self._avg_std1, q1_distr.mean + 3*self._avg_std1).detach()
+            q_target_sample_for2= th.clamp(q_target_sample, q2_distr.mean - 3*self._avg_std2, q2_distr.mean + 3*self._avg_std2).detach()
+            q1_ce = 0.5*(q1_distr.mean - q_target_mu)**2 / q1_distr.variance + 0.5 * th.log(q1_distr.variance) + 0.5*(q_target_sample_for1-q_target_mu)**2/q1_distr.variance
+            q2_ce = 0.5*(q2_distr.mean - q_target_mu)**2 / q2_distr.variance + 0.5 * th.log(q2_distr.variance) + 0.5*(q_target_sample_for2-q_target_mu)**2/q2_distr.variance
+            #q1_ce = - q1_distr.log_prob(q_target_sample_1)
+            #q2_ce = - q2_distr.log_prob(q_target_sample_2)
+            w1 = q1_distr.variance.detach().mean() # variance-based critic gradient adjustment
+            w2 = q2_distr.variance.detach().mean() # variance-based critic gradient adjustment
             q_loss = w1*q1_ce.mean() + w2*q2_ce.mean() 
             q_avg = 0.5*(q1_distr.mean + q2_distr.mean)
             q_std_avg = 0.5*(q1_distr.stddev + q2_distr.stddev)
@@ -164,6 +173,8 @@ class DSACT(Agent):
             self._q_optim.step()
             self._soft_update(self._q1, self._q1_target)
             self._soft_update(self._q2, self._q2_target)
+            self._avg_std1 = self._tau * q1_distr.stddev.mean() + (1 - self._tau) * self._avg_std1
+            self._avg_std2 = self._tau * q2_distr.stddev.mean() + (1 - self._tau) * self._avg_std2
             # on-policy updates
             if (self._total_grad_steps+1) % self._policy_delay == 0:
                 self._pi_optim.zero_grad()
@@ -184,7 +195,7 @@ class DSACT(Agent):
                 self.log("pi_entropy_avg", pi_entropy.mean().item())
                 self.log("q_avg_onpolicy", q_avg_onpolocy.mean().item())
                 self.log("q_std_avg_onpolicy", q_std_avg_onpolicy.mean().item())
-                self.log("q_std_avg_onpolicy", q_std_epistemic_onpolicy.mean().item())
+                self.log("q_std_avg_onpolicy_epistemic", q_std_epistemic_onpolicy.mean().item())
                 pi_loss.backward()
                 self._pi_optim.step()
                 # if autotune

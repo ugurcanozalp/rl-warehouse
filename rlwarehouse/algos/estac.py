@@ -1,9 +1,8 @@
 
 from typing import Iterator, List, Tuple, Callable, Any
 from argparse import ArgumentParser
-import os 
+import os
 
-import random
 import math
 import numpy as np
 import torch as th
@@ -15,7 +14,7 @@ from ..nets import probabilistic_policy_map, probabilistic_qvalue_map
 
 class ESTAC(Agent):
     
-    """Ensemble Stochastic Actor Critic
+    """Epistemic Stochastic Actor-Critic (ESTAC) using epistemic pessimism through double Q learning.
     """
     
     def __init__(self, 
@@ -25,10 +24,8 @@ class ESTAC(Agent):
         target_entropy: float = -4, 
         gamma: float = 0.99, 
         alpha: float = 0.2, 
-        beta: float = 0.5, 
-        num_critic: int = 5, 
-        num_actor: int = 5, 
-        dropout: float = 0.0, 
+        pi_dropout: float = 0.0, 
+        q_dropout: float = 0.0, 
         tau: float = 0.005, 
         batch_per_step: int = 1, 
         policy_delay: int = 1, 
@@ -43,10 +40,8 @@ class ESTAC(Agent):
         self._autotune = autotune
         self._target_entropy = target_entropy
         self._alpha = alpha
-        self._beta = beta
-        self._num_critic = num_critic
-        self._num_actor = num_actor
-        self._dropout = dropout
+        self._pi_dropout = pi_dropout
+        self._q_dropout = q_dropout
         self._tau = tau
         self._batch_per_step = batch_per_step
         self._policy_delay = policy_delay
@@ -54,57 +49,53 @@ class ESTAC(Agent):
         self._q_lr = q_lr
         self._pi_lr = pi_lr
         # networks
-        self._pis = []
-        for _ in range(self._num_actor):
-            pi = probabilistic_policy_map[pi_net](dropout=self._dropout, **self.env_info).to(self._device)
-            self._pis.append(pi)
-        self._qs = []
-        self._qs_target = []
-        for _ in range(self._num_critic):
-            q = probabilistic_qvalue_map[q_net](dropout=self._dropout, **self.env_info).to(self._device)
-            q_target = probabilistic_qvalue_map[q_net](dropout=self._dropout, **self.env_info).to(self._device)
-            # no grad for target networks
-            for param in q_target.parameters():
-                param.requires_grad = False
-            self._hard_update(q, q_target)
-            self._qs.append(q)
-            self._qs_target.append(q_target)
+        self._pi = probabilistic_policy_map[pi_net](dropout=self._pi_dropout, **self.env_info).to(self._device)
+        self._q1 = probabilistic_qvalue_map[q_net](dropout=self._q_dropout, **self.env_info).to(self._device)
+        self._q1_target = probabilistic_qvalue_map[q_net](dropout=self._q_dropout, **self.env_info).to(self._device)
+        self._q2 = probabilistic_qvalue_map[q_net](dropout=self._q_dropout, **self.env_info).to(self._device)
+        self._q2_target = probabilistic_qvalue_map[q_net](dropout=self._q_dropout, **self.env_info).to(self._device)        
+        # no grad for target networks
+        for param in self._q1_target.parameters():
+            param.requires_grad = False
+        self._hard_update(self._q1, self._q1_target)
+        for param in self._q2_target.parameters():
+            param.requires_grad = False
+        self._hard_update(self._q2, self._q2_target)            
         # optimizers
         self._construct_optimizers()
         # sample fields
         self._sample_fields = ("observation", "action", "reward", "next_observation", "done")   
-
+                
     def save_ckpt(self, path: os.PathLike):
         th.save(self._pi.state_dict(), os.path.join(path, "pi.pth"))
-        for k in range(self._num_critic):
-            th.save(self._qs[k].state_dict(), os.path.join(path, "q"+str(k)+".pth"))
+        th.save(self._q1.state_dict(), os.path.join(path, "q1.pth"))
+        th.save(self._q2.state_dict(), os.path.join(path, "q2.pth"))
 
     def load_ckpt(self, path: os.PathLike):
         self._pi.load_state_dict(th.load(os.path.join(path, "pi.pth"), map_location=self.device))
-        for k in range(self._num_critic):
-            self._qs[k].load_state_dict(th.load(os.path.join(path, "q"+str(k)+".pth"), map_location=self.device))
-            self._hard_update(self._qs[k], self._qs_target[k])
+        self._q1.load_state_dict(th.load(os.path.join(path, "q1.pth"), map_location=self.device))
+        self._q2.load_state_dict(th.load(os.path.join(path, "q2.pth"), map_location=self.device))
+        self._hard_update(self._q1, self._q1_target)
+        self._hard_update(self._q2, self._q2_target)
 
     @property
     def derived_fields(self):
-        """There is no derived field of STAC algorithm. 
+        """There is no derived field of DSTAC algorithm. 
         """
         return ()
-
+    
     def step_torch(self, observation: th.Tensor, exploit: bool = False):
-        pi = random.choice(self._pis)  # random actor selected
-        distr = pi(observation)
+        distr = self._pi(observation)
         if exploit:
             action = distr.rsample((10, )).mean(dim=0) # averaged action
         else:
             action = distr.rsample()
         log_prob = distr.log_prob(action)
-        if pi.independent_actions: 
-            log_prob = log_prob.sum(dim=-1)    
-        value = 0
-        for q in self._qs:
-            q_distr_ = q(observation, action)      
-            value += (1/self._num_critic) * q_distr_.mean.squeeze(-1) + self._alpha * (-log_prob)      
+        if self._pi.independent_actions: 
+            log_prob = log_prob.sum(dim=-1)            
+        q1_distr = self._q1(observation, action)
+        q2_distr = self._q2(observation, action) 
+        value = 0.5*( q1_distr.mean.squeeze(-1) + q2_distr.mean.squeeze(-1) ) + self._alpha * (-log_prob)
         return action, log_prob, value
 
     @th.no_grad()
@@ -138,65 +129,55 @@ class ESTAC(Agent):
             observation, action, reward, next_observation, done \
                 = self.memory.sample(self._sample_fields, self._batch_size)
             with th.no_grad():
-                pi = random.choice(self._pis)  # random actor selected
-                next_action_distr = pi(next_observation)
+                next_action_distr = self._pi(next_observation)
                 next_action = next_action_distr.sample()
                 next_entropy = - next_action_distr.log_prob(next_action)
-                if pi.independent_actions: 
+                if self._pi.independent_actions: 
                     next_entropy = next_entropy.sum(dim=-1, keepdim=True)  
-                m = random.randrange(self._num_critic) # random critic selected
-                next_q_distr = self._qs_target[m](next_observation, next_action)
-                next_value = (next_q_distr.mean - self._beta * next_q_distr.stddev + self._alpha * next_entropy) * done.logical_not().unsqueeze(-1)
+                next_q1_distr = self._q1_target(next_observation, next_action)
+                next_q2_distr = self._q2_target(next_observation, next_action)
+                next_q = th.min(next_q1_distr.mean, next_q2_distr.mean) # in target minimization
+                next_value = (next_q + self._alpha * next_entropy) * done.logical_not().unsqueeze(-1)
                 q_target = reward.unsqueeze(-1) + self._gamma * next_value
             # critic learning behavioral policy 
             self._q_optim.zero_grad()
-            q_loss = 0
-            q_means_list = []
-            q_stds_list = []
-            for q in self._qs:
-                q_distr_i = q(observation, action)
-                q_ce = - q_distr_i.log_prob(q_target) 
-                q_loss += q_ce.mean()
-                q_means_list.append(q_distr_i.mean)
-                q_stds_list.append(q_distr_i.stddev)
-            q_avg = th.concat(q_means_list, dim=-1).mean(dim=-1).mean()
-            q_std_avg = th.concat(q_stds_list, dim=-1).mean(dim=-1).mean()
-            q_epistemic_std = th.concat(q_means_list, dim=-1).std(dim=-1).mean()
+            q1_distr = self._q1(observation, action)
+            q2_distr = self._q2(observation, action)
+            q1_ce = - q1_distr.log_prob(q_target) 
+            q2_ce = - q2_distr.log_prob(q_target)
+            q_loss = q1_ce.mean() + q2_ce.mean()
+            q_avg = 0.5*(q1_distr.mean + q2_distr.mean)
+            q_std_avg = 0.5*(q1_distr.stddev + q2_distr.stddev)
+            q_std_epistemic = 0.5*(q1_distr.mean - q2_distr.mean).abs()
             self.log("q_loss", q_loss.item())
-            self.log("q_avg", q_avg.item())
-            self.log("q_std_avg", q_std_avg.item())
-            self.log("q_epistemic_std", q_epistemic_std.mean().item())
+            self.log("q_avg", q_avg.mean().item())
+            self.log("q_std_avg", q_std_avg.mean().item())
+            self.log("q_std_epistemic", q_std_epistemic.mean().item())
             q_loss.backward()
             self._q_optim.step()
-            for k in range(self._num_critic):
-                self._soft_update(self._qs[k], self._qs_target[k])
+            self._soft_update(self._q1, self._q1_target)
+            self._soft_update(self._q2, self._q2_target)
             # on-policy updates
-            pi_loss = 0
-            pi_entropy_list = []
-            q_avg_onpolicy_list = []
-            q_std_avg_onpolicy_list = []
             if (self._total_grad_steps+1) % self._policy_delay == 0:
                 self._pi_optim.zero_grad()
-                for pi in self._pis:
-                    action_distr = pi(observation)
-                    action_onpolicy = action_distr.rsample()
-                    pi_entropy = - action_distr.log_prob(action_onpolicy)
-                    if pi.independent_actions: 
-                        pi_entropy = pi_entropy.sum(dim=-1, keepdim=True)
-                    m = random.randrange(self._num_critic) # random critic selected.
-                    q_onpolicy_distr = self._qs[m](observation, action_onpolicy)
-                    q_onpolicy = q_onpolicy_distr.mean - self._beta * q_onpolicy_distr.stddev
-                    pi_obj = - (q_onpolicy + self._alpha * pi_entropy) 
-                    pi_loss = pi_obj.mean()
-                pi_entropy = th.concat(pi_entropy_list, dim=-1).mean(dim=-1)
-                q_avg_onpolicy = th.concat(q_avg_onpolicy_list, dim=-1).mean(dim=-1).mean()
-                q_std_avg_onpolicy = th.concat(q_std_avg_onpolicy_list, dim=-1).mean(dim=-1).mean()
-                q_epistemic_std_avg_onpolicy = th.concat(q_avg_onpolicy_list, dim=-1).std(dim=-1).mean()
+                action_distr = self._pi(observation)
+                action_onpolicy = action_distr.rsample()
+                pi_entropy = - action_distr.log_prob(action_onpolicy)
+                if self._pi.independent_actions: 
+                    pi_entropy = pi_entropy.sum(dim=-1, keepdim=True)
+                q1_onpolicy_distr = self._q1(observation, action_onpolicy)
+                q2_onpolicy_distr = self._q2(observation, action_onpolicy)
+                q_obj_onpolicy = th.min(q1_onpolicy_distr.mean, q2_onpolicy_distr.mean)
+                q_avg_onpolocy = 0.5*(q1_onpolicy_distr.mean + q2_onpolicy_distr.mean)
+                q_std_avg_onpolicy = 0.5*(q1_onpolicy_distr.stddev + q2_onpolicy_distr.stddev)
+                q_std_epistemic_onpolicy = 0.5*(q1_onpolicy_distr.mean - q2_onpolicy_distr.mean).abs()
+                pi_obj = - (q_obj_onpolicy + self._alpha * pi_entropy) 
+                pi_loss = pi_obj.mean()
                 self.log("pi_loss", pi_loss.item())
                 self.log("pi_entropy_avg", pi_entropy.mean().item())
-                self.log("q_avg_onpolicy", q_avg_onpolicy.mean().item())
+                self.log("q_avg_onpolicy", q_avg_onpolocy.mean().item())
                 self.log("q_std_avg_onpolicy", q_std_avg_onpolicy.mean().item())
-                self.log("q_epistemic_std_avg_onpolicy", q_epistemic_std_avg_onpolicy.mean().item())
+                self.log("q_std_avg_onpolicy_epistemic", q_std_epistemic_onpolicy.mean().item())
                 pi_loss.backward()
                 self._pi_optim.step()
                 # if autotune
@@ -207,7 +188,7 @@ class ESTAC(Agent):
 
     def learn_on_epoch(self):
         pass
-    
+        
     @property
     def hparams(self):
         param = {
@@ -215,10 +196,8 @@ class ESTAC(Agent):
             "target_entropy": self._target_entropy, 
             "gamma": self._gamma, 
             "alpha": self._alpha, 
-            "beta": self._beta, 
-            "num_critic": self._num_critic, 
-            "num_actor": self._num_actor, 
-            "dropout": self._dropout, 
+            "pi_dropout": self._pi_dropout, 
+            "q_dropout": self._q_dropout, 
             "tau": self._tau, 
             "batch_per_step": self._batch_per_step, 
             "policy_delay": self._policy_delay, 
@@ -230,17 +209,19 @@ class ESTAC(Agent):
     
     def _construct_optimizers(self):
         """Initialize Adam optimizer."""
-        self._pi_optim = Adam([{'params': pi.parameters()} for pi in self._pis], lr=self._pi_lr)
-        self._q_optim = Adam([{'params': q.parameters()} for q in self._qs], lr=self._q_lr)
-
+        self._pi_optim = Adam(self._pi.parameters(), lr=self._pi_lr)
+        self._q_optim = Adam(
+            [{'params': self._q1.parameters()}, {'params': self._q2.parameters()}], 
+            lr=self._q_lr
+        )
     def train_mode(self):
-        for q in self._qs:
-            q.train()
+        self._q1.train()
+        self._q2.train()
         self._pi.train()
 
     def eval_mode(self):
-        for q in self._qs:
-            q.eval()
+        self._q1.eval()
+        self._q2.eval()
         self._pi.eval()
 
     def compute_function(self,
@@ -269,10 +250,8 @@ class ESTAC(Agent):
         parser.add_argument("--target_entropy", type=float, default=-4)
         parser.add_argument("--gamma", type=float, default=0.99)
         parser.add_argument("--alpha", type=float, default=0.2)
-        parser.add_argument("--beta", type=float, default=0.5)
-        parser.add_argument("--num_critic", type=int, default=5)
-        parser.add_argument("--num_actor", type=int, default=5)
-        parser.add_argument("--dropout", type=float, default=0.0)
+        parser.add_argument("--pi_dropout", type=float, default=0.0)
+        parser.add_argument("--q_dropout", type=float, default=0.0)
         parser.add_argument("--tau", type=float, default=0.005)
         parser.add_argument("--batch_per_step", type=int, default=1)
         parser.add_argument("--policy_delay", type=int, default=1)
