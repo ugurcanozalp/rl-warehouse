@@ -134,13 +134,13 @@ class STAC(Agent):
                     next_entropy = next_entropy.sum(dim=-1, keepdim=True)  
                 next_q_distr = self._q_target(next_observation, next_action)
                 next_value = (next_q_distr.mean - self._beta * next_q_distr.stddev + self._alpha * next_entropy) * done.logical_not().unsqueeze(-1)
-                #next_value_sample = (next_q_distr.rsample() + self._alpha * next_entropy) * done.logical_not().unsqueeze(-1)
+                #next_value_var = next_q_distr.variance * done.logical_not().unsqueeze(-1)
                 q_target = reward.unsqueeze(-1) + self._gamma * next_value
-                #q_target_sample = reward.unsqueeze(-1) + self._gamma * next_value_sample
+                #q_target_var = self._gamma**2 * next_value_var
             # critic learning behavioral policy 
             self._q_optim.zero_grad()
             q_distr = self._q(observation, action)
-            q_ce = - q_distr.log_prob(q_target)  
+            q_ce = - q_distr.log_prob(q_target)
             q_loss = q_ce.mean()
             self.log("q_loss", q_loss.item())
             self.log("q_avg", q_distr.mean.mean().item())

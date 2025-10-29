@@ -23,7 +23,8 @@ class SQAC(Agent):
         autotune: bool = False, 
         target_entropy: float = -4, 
         gamma: float = 0.99, 
-        num_quantiles: int = 25,         
+        num_quantiles: int = 25,  
+        num_drop_quantiles: float = 2, 
         alpha: float = 0.2, 
         beta: float = 0.0, 
         autopessimism: bool = False,
@@ -44,6 +45,7 @@ class SQAC(Agent):
         self._autotune = autotune
         self._target_entropy = target_entropy
         self._num_quantiles = num_quantiles
+        self._num_drop_quantiles = num_drop_quantiles
         self._kappa = kappa
         self._alpha = alpha
         self._beta = beta
@@ -134,8 +136,9 @@ class SQAC(Agent):
                 if self._pi.independent_actions: 
                     next_entropy = next_entropy.sum(dim=-1, keepdim=True)  
                 next_q_values_quantiles = self._q_target(next_observation, next_action) # batch, num_qtls
-                next_q_values_pessimistic = next_q_values_quantiles - self._beta * next_q_values_quantiles.std(dim=-1, keepdim=True)
-                next_value_target = next_q_values_pessimistic + self._alpha * next_entropy
+                next_q_values_sorted, _ = next_q_values_quantiles.sort(dim=-1) # batch x num_quants 
+                next_q_values_truncated = next_q_values_sorted[:, :self._num_quantiles-self._num_drop_quantiles] # drop maximum quantiles
+                next_value_target = next_q_values_truncated + self._alpha * next_entropy
                 q_target = reward.unsqueeze(-1) + self._gamma * next_value_target * done.logical_not().unsqueeze(-1) # batch, 1
             # critic learning behavioral policy 
             self._q_optim.zero_grad()
@@ -162,8 +165,9 @@ class SQAC(Agent):
                 if self._pi.independent_actions: 
                     pi_entropy = pi_entropy.sum(dim=-1, keepdim=True)
                 q_onpolicy_quantiles = self._q(observation, action_onpolicy)
-                q_onpolicy_quantiles_pessimistic = q_onpolicy_quantiles - self._beta * q_onpolicy_quantiles.std(dim=-1, keepdim=True) 
-                q_onpolicy = q_onpolicy_quantiles_pessimistic.mean(dim=-1, keepdim=True)
+                q_onpolicy_sorted, _ = q_onpolicy_quantiles.sort(dim=-1) # batch x num_quants 
+                q_onpolicy_truncated = q_onpolicy_sorted[:, :self._num_quantiles-self._num_drop_quantiles] # drop maximum quantiles                
+                q_onpolicy = q_onpolicy_truncated.mean(dim=-1, keepdim=True)
                 pi_obj = - (q_onpolicy + self._alpha * pi_entropy)
                 pi_loss = pi_obj.mean()
                 self.log("pi_loss", pi_loss.item())
@@ -256,6 +260,7 @@ class SQAC(Agent):
         parser.add_argument("--target_entropy", type=float, default=-4)
         parser.add_argument("--gamma", type=float, default=0.99)
         parser.add_argument("--num_quantiles", type=int, default=25)
+        parser.add_argument("--num_drop_quantiles", type=int, default=2)
         parser.add_argument("--kappa", type=float, default=1.0)
         parser.add_argument("--alpha", type=float, default=0.2)
         parser.add_argument("--beta", type=float, default=0.0)
