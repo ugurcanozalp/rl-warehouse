@@ -150,7 +150,8 @@ class STAC(Agent):
             if self._autopessimism: # EXPERIMENTAL: adjust beta for autopessimism
                 error_z_score_ = ( (q_distr.mean - q_target)/q_distr.stddev).mean()
                 err_term = error_z_score_.cpu().item()
-                self._beta = self._beta - self._beta_lr * err_term
+                #self._beta = self._beta - self._beta_lr * err_term
+                self._beta = self._beta * math.exp( + self._beta_lr * err_term )
                 self.log("beta", self._beta)        
                 self.log("error_z_score_", error_z_score_)
             # soft update

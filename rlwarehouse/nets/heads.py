@@ -42,8 +42,8 @@ class SquashedGaussianHead(nn.Module):
     def __init__(self, n):
         super(SquashedGaussianHead, self).__init__()
         self._n = n
-        self._max_logstd = 2
-        self._min_logstd = -5
+        #self._max_logstd = 2
+        #self._min_logstd = -5
 
     def forward(self, x):
         # bt means before tanh
