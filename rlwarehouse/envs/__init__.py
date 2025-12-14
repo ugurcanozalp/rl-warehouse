@@ -1,2 +1,2 @@
 
-from .risky_masspoint import RiskyMassPoint 
+from .risky_pointmass import RiskyPointMass 

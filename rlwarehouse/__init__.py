@@ -8,13 +8,13 @@ from .logger import Logger
 
 # import other gym libraries
 import cartpoleswingup_gym
-from .envs.risky_masspoint import RiskyMassPoint
+from .envs.risky_pointmass import RiskyPointMass
 
 from gymnasium.envs.registration import register
-from .envs import RiskyMassPoint
+from .envs import RiskyPointMass
 
 
 register(
-    id='RiskyMassPoint-v0',
-    entry_point='rlwarehouse.envs:RiskyMassPoint',
+    id='RiskyPointMass-v0',
+    entry_point='rlwarehouse.envs:RiskyPointMass',
 )

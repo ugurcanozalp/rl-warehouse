@@ -5,20 +5,33 @@ from gymnasium import spaces
 from gymnasium.utils import seeding
 import numpy as np
 
+# Modified from the source: https://github.com/JasonMa2016/CODAC/
+# Paper: https://arxiv.org/pdf/2107.06106
+#
+# The state space of the PointMass agent 4-dimensional, including
+# the agent’s position as well as the goal position, which is fixed to [0.1, 0.1]. The state space constraint
+# is [0, 1]. Hence, the agent cannot enter a location outside of this unit square. The risky red region
+# is centered at [0.5, 0.5] with radius of 0.3. The agent’s initial state is randomly chosen inside the
+# [0.1, 0.9]2 box outside the risky red region. The agent dynamics is holomorphic, allowing the agent
+# to move freely in any direction with its x-axis and y-axis displacement capped at 0.1. The reward
+# the agent receives at each step is its negative Euclidean distance to the goal plus a constant −0.1,
+# which encourages the agent to reach the goal as fast as possible. When the agent is inside the risky
+# red region, with probability 0.1, an additional −50 reward is incurred. The episode terminates when
+# the agent is within 0.1 distance to the goal. An episode may last up to 100 steps.
 
-class RiskyMassPoint(gym.Env):
+class RiskyPointMass(gym.Env):
     def __init__(self, N=1, risk_prob=0.1, risk_penalty=50, eval=False, render_mode=None, max_episode_steps=100):
-        # Step 1: Car parameterss
+        # Car parameterss
         self.v_max = 0.1
-        self.v_sigma = 0.01
-        # Step 3: Environment parameters
-        self.d_safe = 0.1
-        self.d_goal = 0.05
-        self.d_sampling = 0.1
+        # self.v_sigma = 0.01 # unused
+        # Environment parameters
+        # self.d_safe = 0.1 # unused
+        self.d_goal = 0.1
+        # self.d_sampling = 0.1 # unused
         self.init_pos = np.array([1.0, 1.0])
         self.risk_prob = risk_prob
         self.risk_penalty = risk_penalty
-        self.N = N # number of obstacles
+        # self.N = N # number of obstacles, unused
         self.eval = eval
         self.render_mode = render_mode
         self.max_episode_steps = max_episode_steps
@@ -75,15 +88,15 @@ class RiskyMassPoint(gym.Env):
         ):
         
         self.t = 0
-        sampled = False
-        while not sampled:
-            # uniform state space initial state distribution
-            self.init_pos = self.np_random.uniform(0.1, 0.9, size=(2,))
-
-            if self.is_safe(self.init_pos):
-                sampled = True
         if self.eval:
             self.init_pos = np.array([0.85, 0.85]) + self.np_random.uniform(-0.05, 0, size=(2,))
+        else:        
+            sampled = False
+            while not sampled:
+                # uniform state space initial state distribution
+                self.init_pos = self.np_random.uniform(0.1, 0.9, size=(2,))
+                if self.is_safe(self.init_pos):
+                    sampled = True
 
         self.state = np.array(list(self.init_pos) + list(self.goal))
         return np.array(self.state), {'cost': 0}
