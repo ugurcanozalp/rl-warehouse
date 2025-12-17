@@ -461,7 +461,7 @@ class Agent(object):
         """
         raise NotImplementedError
     
-    def eval(self): 
+    def eval(self, record=False): 
         """Evaluate the agent for fixed number of episodes
         """
         self.eval_mode()
@@ -469,6 +469,8 @@ class Agent(object):
         time = 0
         self.reset()
         observation, _ = self._env_eval.reset()
+        if record:
+            self._clear_record(observation)
         values = []
         rewards = []        
         log_probs = []
@@ -477,8 +479,10 @@ class Agent(object):
             action, log_prob, value = self.step(observation, exploit=True)
             values.append(value)
             if action is None: # it means self says randomly act.
-                action = np.tanh(np.random.randn(*self._env.action_space.shape)) # random action between (-1, 1)
+                action = np.tanh(np.random.randn(*self._env.action_space.shape)) # random actio1n between (-1, 1)
             next_observation, reward, done, truncated, _ = self._env_eval.step(self._adjust_action(action))
+            if record:
+                self._record(next_observation, action, reward, done, truncated, time)
             is_episode_end = done or truncated
             rewards.append(reward)
             log_probs.append(log_prob)

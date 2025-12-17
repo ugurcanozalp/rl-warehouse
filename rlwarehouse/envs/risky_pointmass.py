@@ -20,18 +20,14 @@ import numpy as np
 # the agent is within 0.1 distance to the goal. An episode may last up to 100 steps.
 
 class RiskyPointMass(gym.Env):
-    def __init__(self, N=1, risk_prob=0.1, risk_penalty=50, eval=False, render_mode=None, max_episode_steps=100):
+    def __init__(self, N=1, risk_prob=0.1, risk_penalty=10, eval=False, render_mode=None, max_episode_steps=100):
         # Car parameterss
         self.v_max = 0.1
-        # self.v_sigma = 0.01 # unused
         # Environment parameters
-        # self.d_safe = 0.1 # unused
-        self.d_goal = 0.1
-        # self.d_sampling = 0.1 # unused
-        self.init_pos = np.array([1.0, 1.0])
+        self.d_goal = 0.05
+        self.init_pos = np.array([0.95, 0.95])
         self.risk_prob = risk_prob
         self.risk_penalty = risk_penalty
-        # self.N = N # number of obstacles, unused
         self.eval = eval
         self.render_mode = render_mode
         self.max_episode_steps = max_episode_steps
@@ -57,7 +53,7 @@ class RiskyPointMass(gym.Env):
             dtype=np.float32
         )
 
-        self.goal = np.array([0.1, 0.1])
+        self.goal = np.array([0.05, 0.05])
         self.r = 0.3 # obstacle radius
         self.centers = np.array([0.5, 0.5])
 
@@ -89,12 +85,12 @@ class RiskyPointMass(gym.Env):
         
         self.t = 0
         if self.eval:
-            self.init_pos = np.array([0.85, 0.85]) + self.np_random.uniform(-0.05, 0, size=(2,))
+            self.init_pos = np.array([0.95, 0.95])
         else:        
             sampled = False
             while not sampled:
                 # uniform state space initial state distribution
-                self.init_pos = self.np_random.uniform(0.1, 0.9, size=(2,))
+                self.init_pos = self.np_random.uniform(0.05, 0.95, size=(2,))
                 if self.is_safe(self.init_pos):
                     sampled = True
 
@@ -105,18 +101,11 @@ class RiskyPointMass(gym.Env):
     def get_dist_to_goal(self, state):
         return np.linalg.norm(state[-2:]-state[:2])
 
-    # Check if the state is safe.
-    def is_safe(self, state):
-        if len(state.shape) == 1:
-            safe = True
-            d_circle = (state[0]-self.centers[0])**2 + (state[1]-self.centers[1])**2
-            if d_circle <= (self.r ** 2):
-                safe = False
-            return safe
-        elif len(state.shape) == 2:
-            d_circle = (state[:, 0] - 0.5) ** 2 + (state[:, 1] - 0.5) ** 2
-            safe = (d_circle > self.r ** 2).astype(float)
-            return safe
+    # calculate failure risk
+    def calc_risk(self, state):
+        safe = True
+        d_circle = (state[0]-self.centers[0])**2 + (state[1]-self.centers[1])**2
+        return self.risk_prob*np.exp(-4*d_circle**2/self.r**2)
 
     def step(self, action):
         action = np.clip(action, -self.v_max, self.v_max)
@@ -124,13 +113,12 @@ class RiskyPointMass(gym.Env):
 
         d_goal = self.get_dist_to_goal(self.state)
         reward = - d_goal - 0.1
-
         cost = 0
-        if not self.is_safe(self.state):
-            u = np.random.uniform(0, 1)
-            if u > self.risk_prob:
-                cost = 1
-                reward -= self.risk_penalty
+        u = np.random.uniform(0, 1)
+        if u > self.calc_risk(self.state):
+            cost = 1
+            reward -= self.risk_penalty
+
         done = False
         if d_goal < self.d_goal:
             done = True
