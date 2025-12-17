@@ -101,6 +101,15 @@ class RiskyPointMass(gym.Env):
     def get_dist_to_goal(self, state):
         return np.linalg.norm(state[-2:]-state[:2])
 
+    # Check if the state is safe.
+    def is_safe(self, state):
+        if len(state.shape) == 1:
+            safe = True
+            d_circle = (state[0]-self.centers[0])**2 + (state[1]-self.centers[1])**2
+            if d_circle <= (self.r ** 2):
+                safe = False
+            return safe
+
     # calculate failure risk
     def calc_risk(self, state):
         safe = True
