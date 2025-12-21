@@ -1,12 +1,12 @@
 
 from argparse import ArgumentParser
 
-from rlwarehouse.algos import QDSAC
+from rlwarehouse.algos import GDSAC
 
 parser = ArgumentParser()
-parser = QDSAC.add_model_specific_args(parser)
+parser = GDSAC.add_model_specific_args(parser)
 args = parser.parse_args()
 dict_args = vars(args)
-agent = QDSAC(**dict_args)
+agent = GDSAC(**dict_args)
 
 agent.experiment()
