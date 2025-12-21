@@ -20,15 +20,14 @@ import numpy as np
 # the agent is within 0.1 distance to the goal. An episode may last up to 100 steps.
 
 class RiskyPointMass(gym.Env):
-    def __init__(self, N=1, risk_prob=0.1, risk_penalty=10, eval=False, render_mode=None, max_episode_steps=100):
+    def __init__(self, base_risk_prob=0.1, risk_penalty=10, render_mode=None, max_episode_steps=300):
         # Car parameterss
-        self.v_max = 0.1
+        self.v_scale = 0.1
         # Environment parameters
-        self.d_goal = 0.05
-        self.init_pos = np.array([0.95, 0.95])
-        self.risk_prob = risk_prob
+        self.target_d_goal = 0.05
+        self.init_pos = np.array([1.0, 1.0])
+        self.base_risk_prob = base_risk_prob
         self.risk_penalty = risk_penalty
-        self.eval = eval
         self.render_mode = render_mode
         self.max_episode_steps = max_episode_steps
 
@@ -36,10 +35,10 @@ class RiskyPointMass(gym.Env):
         self.high_state= 1
 
         self.min_actions = np.array(
-            [-self.v_max, -self.v_max], dtype=np.float32
+            [-1, -1], dtype=np.float32
         )
         self.max_actions = np.array(
-            [self.v_max, self.v_max], dtype=np.float32
+            [1, 1], dtype=np.float32
         )
         self.action_space = spaces.Box(
             low=self.min_actions,
@@ -49,11 +48,11 @@ class RiskyPointMass(gym.Env):
         self.observation_space = spaces.Box(
             low=self.low_state,
             high=self.high_state,
-            shape=(2+2, ),
+            shape=(2, ),
             dtype=np.float32
         )
 
-        self.goal = np.array([0.05, 0.05])
+        self.goal = np.array([0.0, 0.0])
         self.r = 0.3 # obstacle radius
         self.centers = np.array([0.5, 0.5])
 
@@ -83,22 +82,19 @@ class RiskyPointMass(gym.Env):
         options: dict | None = None,
         ):
         
-        self.t = 0
-        if self.eval:
-            self.init_pos = np.array([0.95, 0.95])
-        else:        
-            sampled = False
-            while not sampled:
-                # uniform state space initial state distribution
-                self.init_pos = self.np_random.uniform(0.05, 0.95, size=(2,))
-                if self.is_safe(self.init_pos):
-                    sampled = True
+        self.t = 0    
+        sampled = False
+        while not sampled:
+            # uniform state space initial state distribution
+            self.init_pos = self.np_random.uniform(0.3, 1.0, size=(2,))
+            if self.is_safe(self.init_pos):
+                sampled = True
 
-        self.state = np.array(list(self.init_pos) + list(self.goal))
+        self.state = np.array(list(self.init_pos))
         return np.array(self.state), {'cost': 0}
 
     def get_dist_to_goal(self, state):
-        return np.linalg.norm(state[-2:]-state[:2])
+        return np.linalg.norm(self.goal-state[:2], ord=2)
 
     # Check if the state is safe.
     def is_safe(self, state):
@@ -106,31 +102,28 @@ class RiskyPointMass(gym.Env):
         d_circle2 = (state[0]-self.centers[0])**2 + (state[1]-self.centers[1])**2
         if d_circle2 <= (self.r ** 2):
             safe = False
-        return safe
+        return safe, d_circle2
 
     # calculate failure risk
     def calc_risk(self, state):
-        safe = True
-        d_circle2 = (state[0]-self.centers[0])**2 + (state[1]-self.centers[1])**2
-        return self.risk_prob*np.exp(-4*d_circle2/self.r**2)
+        safe, d_circle2 = self.is_safe(state)
+        return self.base_risk_prob * np.exp(-4*d_circle2/self.r**2)
 
     def step(self, action):
-        action = np.clip(action, -self.v_max, self.v_max)
+        action = np.clip(action, -1, 1)
         assert self.action_space.contains(action)
 
         d_goal = self.get_dist_to_goal(self.state)
         reward = - d_goal - 0.1
-        cost = 0
         u = np.random.uniform(0, 1)
-        if u > self.calc_risk(self.state):
-            cost = 1
+        if u < self.calc_risk(self.state):
             reward -= self.risk_penalty
 
         done = False
-        if d_goal < self.d_goal:
+        if d_goal < self.target_d_goal:
             done = True
 
-        self.state[:2] = self.state[:2] + action
+        self.state[:2] = self.state[:2] + self.v_scale * (action+self.np_random.uniform(-0.02, 0.02, size=(2,)))
         self.state = np.clip(self.state, self.low_state, self.high_state)
 
         if self.render_mode == "human":
@@ -139,7 +132,7 @@ class RiskyPointMass(gym.Env):
         self.t += 1
         truncated = self.t>=self.max_episode_steps
         
-        return np.array(self.state), reward, done, truncated, {'cost': cost}
+        return np.array(self.state), reward, done, truncated, {}
 
     def render(self):
         if not self.pygame_init:
