@@ -7,20 +7,10 @@ import numpy as np
 
 # Modified from the source: https://github.com/JasonMa2016/CODAC/
 # Paper: https://arxiv.org/pdf/2107.06106
-#
-# The state space of the PointMass agent 4-dimensional, including
-# the agent’s position as well as the goal position, which is fixed to [0.1, 0.1]. The state space constraint
-# is [0, 1]. Hence, the agent cannot enter a location outside of this unit square. The risky red region
-# is centered at [0.5, 0.5] with radius of 0.3. The agent’s initial state is randomly chosen inside the
-# [0.1, 0.9]2 box outside the risky red region. The agent dynamics is holomorphic, allowing the agent
-# to move freely in any direction with its x-axis and y-axis displacement capped at 0.1. The reward
-# the agent receives at each step is its negative Euclidean distance to the goal plus a constant −0.1,
-# which encourages the agent to reach the goal as fast as possible. When the agent is inside the risky
-# red region, with probability 0.1, an additional −50 reward is incurred. The episode terminates when
-# the agent is within 0.1 distance to the goal. An episode may last up to 100 steps.
+
 
 class RiskyPointMass(gym.Env):
-    def __init__(self, base_risk_prob=0.1, risk_penalty=10, render_mode=None, max_episode_steps=300):
+    def __init__(self, base_risk_prob=0.1, risk_penalty=10, render_mode=None, max_episode_steps=200):
         # Car parameterss
         self.v_scale = 0.1
         # Environment parameters
@@ -107,7 +97,11 @@ class RiskyPointMass(gym.Env):
     # calculate failure risk
     def calc_risk(self, state):
         safe, d_circle2 = self.is_safe(state)
-        return self.base_risk_prob * np.exp(-4*d_circle2/self.r**2)
+        if safe:
+            risk = 0
+        else
+            risk = self.base_risk_prob * np.exp(-4*d_circle2/self.r**2)
+        return risk
 
     def step(self, action):
         action = np.clip(action, -1, 1)
