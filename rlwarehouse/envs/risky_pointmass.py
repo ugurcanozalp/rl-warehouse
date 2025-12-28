@@ -99,7 +99,7 @@ class RiskyPointMass(gym.Env):
         safe, d_circle2 = self.is_safe(state)
         if safe:
             risk = 0
-        else
+        else:
             risk = self.base_risk_prob * np.exp(-4*d_circle2/self.r**2)
         return risk
 
