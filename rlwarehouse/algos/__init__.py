@@ -13,3 +13,4 @@ from .tqc import TQC
 from .top import TOP
 from .topsac import TOPSAC
 from .dsac import DSAC
+from .dstac import DSTAC
