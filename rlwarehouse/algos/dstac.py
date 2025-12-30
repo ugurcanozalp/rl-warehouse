@@ -165,15 +165,6 @@ class DSTAC(Agent):
             # backward and optimize
             q_loss.backward()
             self._q_optim.step()
-            if self._autopessimism: # EXPERIMENTAL: adjust beta for autopessimism
-                error_z1_score_ = ( (q1_distr.mean - q_target)/q1_distr.stddev).mean()
-                error_z2_score_ = ( (q2_distr.mean - q_target)/q2_distr.stddev).mean()
-                error_z_score_ = 0.5 * (error_z1_score_ + error_z2_score_)
-                err_term = error_z_score_.cpu().item()
-                #self._beta = self._beta - self._beta_lr * err_term
-                self._beta = self._beta * math.exp( + self._beta_lr * err_term )
-                self.log("beta", self._beta)        
-                self.log("error_z_score_", error_z_score_)
             # soft update
             self._soft_update(self._q1, self._q1_target)
             self._soft_update(self._q2, self._q2_target)
@@ -205,6 +196,8 @@ class DSTAC(Agent):
                     pi_entropy_ = pi_entropy.mean().cpu().item()
                     self._alpha = self._alpha * math.exp(self._q_lr * self._alpha * ( self._target_entropy - pi_entropy_))
                     self.log("alpha", self._alpha)
+                if self._autopessimism: # EXPERIMENTAL: adjust beta for autopessimism
+                    pass               
 
     def learn_on_epoch(self):
         pass

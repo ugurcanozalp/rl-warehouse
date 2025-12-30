@@ -148,14 +148,7 @@ class STAC(Agent):
             self.log("q_avg", q_distr.mean.mean().item())
             self.log("q_std_avg", q_distr.stddev.mean().item()) 
             q_loss.backward()
-            self._q_optim.step()
-            if self._autopessimism: # EXPERIMENTAL: adjust beta for autopessimism
-                error_z_score_ = ( (q_distr.mean - q_target_nopess)/q_distr.stddev).mean()
-                err_term = error_z_score_.cpu().item()
-                z_margin = 0.0 # change it later
-                self._beta = self._beta * math.exp( + self._beta_lr * (err_term+z_margin) )
-                self.log("beta", self._beta)        
-                self.log("error_z_score_", error_z_score_)
+            self._q_optim.step()          
             # soft update
             self._soft_update(self._q, self._q_target)
             # on-policy updates
@@ -181,6 +174,10 @@ class STAC(Agent):
                     pi_entropy_ = pi_entropy.mean().cpu().item()
                     self._alpha = self._alpha * math.exp(self._q_lr * self._alpha * ( self._target_entropy - pi_entropy_))
                     self.log("alpha", self._alpha)
+                if self._autopessimism: # EXPERIMENTAL: adjust beta for autopessimism
+                    stdtarget = 1.0
+                    self._beta = self._beta * math.exp( + self._beta_lr * (q_onpolicy_distr.stddev - stdtarget).mean().cpu().item() )
+                    self.log("beta", self._beta)
 
     def learn_on_epoch(self):
         pass
