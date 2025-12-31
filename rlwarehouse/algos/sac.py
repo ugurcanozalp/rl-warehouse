@@ -33,7 +33,7 @@ class SAC(Agent):
         super().__init__(**memory_kwargs)
         # hyperparameters
         self._autotune = autotune
-        self._target_entropy = target_entropy # -0.5 * np.prod(self.memory.env_info["action_shape"])
+        self._target_entropy = target_entropy
         self._gamma = gamma
         self._alpha = alpha
         self._dropout = dropout        

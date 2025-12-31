@@ -28,6 +28,8 @@ class DSAC(Agent):
         num_quantiles: int = 25, 
         msd: float = 0.0, 
         cvar_qtl: float = 0.0, 
+        pi_dropout: float = 0.0, 
+        q_dropout: float = 0.0,         
         tau: float = 0.005, 
         batch_per_step: int = 1, 
         policy_delay: int = 1,
@@ -39,12 +41,14 @@ class DSAC(Agent):
         super().__init__(**memory_kwargs)
         # hyperparameters
         self._autotune = autotune
-        self._target_entropy = target_entropy # -0.5 * np.prod(self.memory.env_info["action_shape"])
+        self._target_entropy = target_entropy 
         self._gamma = gamma
         self._alpha = alpha
         self._num_quantiles = num_quantiles
         self._msd = msd # mean semi-deviation weight
         self._cvar_qtl = cvar_qtl # conditional value at risk quantile
+        self._pi_dropout = pi_dropout
+        self._q_dropout = q_dropout        
         self._tau = tau
         self._batch_per_step = batch_per_step
         self._policy_delay = policy_delay
@@ -54,11 +58,11 @@ class DSAC(Agent):
         # 
         self._prev_episode_score = None
         # networks
-        self._pi = probabilistic_policy_map[pi_net](**self.env_info).to(self._device)
-        self._q1 = quantile_qvalue_map[q_net](num_quantiles=self._num_quantiles, **self.env_info).to(self._device)
-        self._q2 = quantile_qvalue_map[q_net](num_quantiles=self._num_quantiles, **self.env_info).to(self._device)
-        self._q1_target = quantile_qvalue_map[q_net](num_quantiles=self._num_quantiles, **self.env_info).eval().to(self._device)
-        self._q2_target = quantile_qvalue_map[q_net](num_quantiles=self._num_quantiles, **self.env_info).eval().to(self._device)
+        self._pi = probabilistic_policy_map[pi_net](dropout=self._pi_dropout, **self.env_info).to(self._device)
+        self._q1 = quantile_qvalue_map[q_net](num_quantiles=self._num_quantiles, dropout=self._q_dropout, **self.env_info).to(self._device)
+        self._q2 = quantile_qvalue_map[q_net](num_quantiles=self._num_quantiles, dropout=self._q_dropout, **self.env_info).to(self._device)
+        self._q1_target = quantile_qvalue_map[q_net](num_quantiles=self._num_quantiles, dropout=self._q_dropout, **self.env_info).eval().to(self._device)
+        self._q2_target = quantile_qvalue_map[q_net](num_quantiles=self._num_quantiles, dropout=self._q_dropout, **self.env_info).eval().to(self._device)
         self._hard_update(self._q1, self._q1_target)
         self._hard_update(self._q2, self._q2_target)
         # no grad for target networks
@@ -285,6 +289,8 @@ class DSAC(Agent):
         parser.add_argument("--num_quantiles", type=int, default=25)
         parser.add_argument("--msd", type=float, default=0.0)
         parser.add_argument("--cvar_qtl", type=float, default=0)
+        parser.add_argument("--pi_dropout", type=float, default=0.0)
+        parser.add_argument("--q_dropout", type=float, default=0.0)        
         parser.add_argument("--tau", type=float, default=0.005)
         parser.add_argument("--batch_per_step", type=int, default=1)
         parser.add_argument("--policy_delay", type=int, default=1)
