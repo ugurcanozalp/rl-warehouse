@@ -19,5 +19,3 @@ python -m scripts.stac --env_name Hopper-v4 --autotune --target_entropy -1 --bet
 
 ## On-policy Algorithms implemented
 - [x] [Proximal Policy Optimization](https://arxiv.org/abs/1707.06347)
-
-{"step": \d*, "eval_beta": 0.125}\n

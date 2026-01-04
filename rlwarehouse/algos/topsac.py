@@ -27,7 +27,7 @@ class ExpWeights(object):
         """Initialize bandit.
 
         Args:
-            arms (List, optional): Arm values. Defaults to [-1, 0].
+            arms (List, optional): Arm values. Defaults to [-0.5, 0].
             lr (float, optional): Learning rate. Defaults to 0.2.
             window (int, optional): Window to normalize over. Defaults to 5.
             decay (float, optional): Decay rate for probability. Defaults to 0.9.
