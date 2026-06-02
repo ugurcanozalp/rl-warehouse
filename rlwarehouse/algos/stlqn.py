@@ -84,9 +84,10 @@ class STLQN(Agent):
             q_value = q_distr.mean - self._beta * q_distr.stddev
             q_grad = th.autograd.grad(q_value.sum(), action_noise, create_graph=True)[0]
             #logprob_grad = q_grad / self._alpha
-            action_noise += self._eta * q_grad + th.sqrt(2 * self._eta * self._alpha) * th.randn_like(action_noise)
+            action_noise += self._eta / self._alpha * q_grad + th.sqrt(2 * self._eta) * th.randn_like(action_noise)
             #action_noise.grad.zero_()
-            action_noise.detach()       
+            action_noise.detach()
+            # self._alpha = (1 - self._tau) * self._alpha + self._tau * self._eta * q_grad.pow(2).mean().item() / 2 # adaptive temperature adjustment
         return action_noise.detach()
 
     def step_torch(self, observation: th.Tensor, exploit: bool = False):
